@@ -37,7 +37,7 @@ jobs:
         run: |
           if [[ "${{ github.head_ref }}" == feature/* && "${{ github.base_ref }}" == "develop" ]]; then
             echo "TFVARS=development/terraform.tfvars" >> $GITHUB_ENV
-          elif [[ "${{ github.head_ref }}" == "feature/*" && "${{ github.base_ref }}" == "main" ]]; then
+          elif [[ "${{ github.head_ref }}" == feature/* && "${{ github.base_ref }}" == "main" ]]; then
             echo "TFVARS=development/terraform.tfvars" >> $GITHUB_ENV
           elif [[ "${{ github.head_ref }}" == "develop" && "${{ github.base_ref }}" == "stage" ]]; then
             echo "TFVARS=staging/terraform.tfvars" >> $GITHUB_ENV
@@ -76,16 +76,13 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           COMMIT_ID: ${{ github.sha }}
         run: |
-          # Check if checkov-report.json exists and contains failed checks
           if [ -f Terraform/checkov-report.json ] && jq -e '.results.failed_checks | length > 0' Terraform/checkov-report.json > /dev/null; then
             jq -c '.results.failed_checks[]' Terraform/checkov-report.json | while read -r issue; do
               PATH_TO_FILE=$(echo "$issue" | jq -r '.file_path')
               LINE=$(echo "$issue" | jq -r '.file_line_range[0]')
               BODY=$(echo "$issue" | jq -r '.check_id + ": " + .check_name')
 
-              # If any field is null/empty, skip this iteration
               if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
-                # Adjust path to be relative to the repo root, removing leading 'Terraform/' if present
                 DISPLAY_PATH="${PATH_TO_FILE}"
                 if [[ "$DISPLAY_PATH" == "Terraform/"* ]]; then
                   DISPLAY_PATH="${DISPLAY_PATH#Terraform/}"
