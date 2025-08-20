@@ -1,0 +1,173 @@
+name: Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  security-scan:
+    if: |
+      (startsWith(github.head_ref, 'feature/') && github.base_ref == 'develop') ||
+      (github.head_ref == 'develop' && github.base_ref == 'stage') ||
+      (github.head_ref == 'stage' && github.base_ref == 'main') ||
+      (startsWith(github.head_ref, 'feature/') && github.base_ref == 'main')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::302263040839:role/Githubactions
+          aws-region: ap-south-1
+
+      - name: Install Bandit and Checkov
+        run: |
+          pip install bandit checkov
+
+      - name: Set environment for plan
+        id: set_env
+        run: |
+          if [[ "${{ github.head_ref }}" == feature/* && "${{ github.base_ref }}" == "develop" ]]; then
+            echo "TFVARS=development/terraform.tfvars" >> $GITHUB_ENV
+          elif [[ "${{ github.head_ref }}" == "feature/*" && "${{ github.base_ref }}" == "main" ]]; then
+            echo "TFVARS=development/terraform.tfvars" >> $GITHUB_ENV
+          elif [[ "${{ github.head_ref }}" == "develop" && "${{ github.base_ref }}" == "stage" ]]; then
+            echo "TFVARS=staging/terraform.tfvars" >> $GITHUB_ENV
+          elif [[ "${{ github.head_ref }}" == "stage" && "${{ github.base_ref }}" == "main" ]]; then
+            echo "TFVARS=production/terraform.tfvars" >> $GITHUB_ENV
+          else
+            echo "TFVARS=development/terraform.tfvars" >> $GITHUB_ENV # Default fallback
+          fi
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: Terraform
+
+      - name: Terraform Plan
+        run: terraform plan -var-file=./environments/${TFVARS} -out=tfplan.binary
+        working-directory: Terraform
+
+      - name: Convert Plan to JSON
+        run: terraform show -json tfplan.binary > tfplan.json
+        working-directory: Terraform
+
+      - name: Run Bandit
+        run: bandit -r . -f json -o bandit-report.json || true
+
+      - name: Run Checkov (scan plan, not .tf)
+        run: checkov -f tfplan.json --repo-root-for-plan-enrichment . -o json > checkov-report.json || true
+        working-directory: Terraform
+
+      - name: Format Reports
+        run: |
+          echo "# :shield: Security Scan Report" > report.md
+          echo "" >> report.md
+
+          CHECKOV_PASSED=$(jq '.summary.passed' Terraform/checkov-report.json 2>/dev/null || echo "0")
+          CHECKOV_FAILED=$(jq '.summary.failed' Terraform/checkov-report.json 2>/dev/null || echo "0")
+          CHECKOV_SKIPPED=$(jq '.summary.skipped' Terraform/checkov-report.json 2>/dev/null || echo "0")
+          BANDIT_FAILED=$(jq '.results | length' bandit-report.json 2>/dev/null || echo "0")
+
+          {
+          echo "1️⃣ **Checkov Report**"
+          echo " - 🟢 **PASSED Checks:** $CHECKOV_PASSED"
+          echo " - 🔴 **FAILED Checks:** $CHECKOV_FAILED"
+          echo " - ⚠️ **SKIPPED Checks:** $CHECKOV_SKIPPED"
+          echo ""
+          echo "2️⃣ **Bandit Report**"
+          echo " - 🔴 **FAILED Checks:** $BANDIT_FAILED"
+          echo ""
+          if [ "$CHECKOV_FAILED" -eq 0 ] && [ "$BANDIT_FAILED" -eq 0 ]; then
+            echo ":white_check_mark: Everything looks secure. Great job! 🔐"
+          else
+            echo "*⚡️ Every 🔴 is a risk bomb. Defuse before you MERGE!*"
+          fi
+          echo ""
+          echo "---"
+          echo ""
+          } >> report.md
+
+          export REPO_URL="https://github.com/${GITHUB_REPOSITORY}"
+          export BRANCH="${GITHUB_HEAD_REF:-$(git rev-parse --abbrev-ref HEAD)}"
+
+          echo "## :cloud: Checkov Detailed Report" >> report.md
+          echo "" >> report.md
+          if [ -f Terraform/checkov-report.json ]; then
+            FAILED=$(jq '.results.failed_checks | length' Terraform/checkov-report.json 2>/dev/null || echo "0")
+            if [ "$FAILED" -gt 0 ]; then
+              jq -r --arg repo_url "$REPO_URL" --arg branch "$BRANCH" '
+              .results.failed_checks[]? |
+              "- **" + (.check_id // "N/A") + ":** " + (.check_name // "N/A") + "\n" +
+              (
+                if (.file_path // "") != "" and
+                ((.file_line_range | type) == "array" and (.file_line_range | length) > 0)
+                then
+                " - **Location:** [`" + (.file_path | ltrimstr("/")) + ":" + ((.file_line_range[0]|tostring) // "?") + "`]" +
+                "(" + $repo_url + "/blob/" + $branch + "/Terraform/" + (.file_path | ltrimstr("/")) + "#L" + ((.file_line_range|tostring) // "") + ")\n"
+                elif .resource_address then
+                " - **Resource:** `" + .resource_address + "`\n"
+                else "" end
+              ) +
+              " - **Severity:** " + ((.severity // "N/A")) + "\n" +
+              " - **Guideline:** " + ((.guideline // "N/A")) + "\n" +
+              " - **Description:** " + ((.description // .check_name // "No description provided.")) + "\n"
+              ' Terraform/checkov-report.json >> report.md
+            else
+              echo ":white_check_mark: **No failed infrastructure checks found!**" >> report.md
+            fi
+          else
+            echo ":warning: Checkov report not generated." >> report.md
+          fi
+          echo "" >> report.md
+          echo "---" >> report.md
+          echo "" >> report.md
+          echo "## :snake: Bandit Detailed Report" >> report.md
+          echo "" >> report.md
+          if [ -f bandit-report.json ]; then
+            COUNT=$(jq '.results | length' bandit-report.json 2>/dev/null || echo "0")
+            if [ "$COUNT" -gt 0 ]; then
+              jq -r --arg repo_url "$REPO_URL" --arg branch "$BRANCH" '
+              .results[] |
+              "### Issue: " + (.issue_text // "N/A") + "\n" +
+              "- **Location:** [`" + (.filename // "unknown") + ":" + ((.line_number | tostring) // "?") + "`]" +
+              "(" + $repo_url + "/blob/" + $branch + "/" + (.filename | ltrimstr("/")) + "#L" + (.line_number|tostring) + ")\n" +
+              "- **Severity:** " + (.issue_severity // "N/A") + "\n" +
+              "- **Confidence:** " + (.issue_confidence // "N/A") + "\n" +
+              "- **CWE:** [" + ((.issue_cwe.id | tostring) // "N/A") + "](" + (.issue_cwe.link // "#") + ")\n" +
+              "---\n"
+              ' bandit-report.json >> report.md
+            else
+              echo ":white_check_mark: **No Bandit issues found!**" >> report.md
+            fi
+          else
+            echo ":warning: Bandit report not generated." >> report.md
+          fi
+          echo "" >> report.md
+          echo "---" >> report.md
+          echo "*This report was generated automatically by the Security Scan Pipeline*" >> report.md
+
+      - name: Upload Reports as Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            Terraform/checkov-report.json
+            report.md
+          retention-days: 30
+
+      - name: Post Security Scan Summary to PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: report.md
