@@ -194,7 +194,7 @@ jobs:
             fi
           else
             echo ":warning: Bandit report not generated." >> report.md
-          Hostfi
+          fi
           echo "" >> report.md
           echo "---" >> report.md
           echo "*This report was generated automatically by the Security Scan Pipeline*" >> report.md
