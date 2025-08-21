@@ -109,7 +109,7 @@ jobs:
           fi
 
           echo "------ DEBUGGING PR COMMENT PAYLOAD ------"
-          echo "API URL: https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments"
+          echo "API URL: https://api.github.com/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments"
           echo "BODY: $BODY"
           echo "COMMIT_ID: $COMMIT_ID"
           echo "PATH: $DISPLAY_PATH"
