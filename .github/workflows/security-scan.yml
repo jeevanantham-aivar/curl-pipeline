@@ -265,15 +265,36 @@ jobs:
           echo "---" >> report.md
           echo "*This report was generated automatically by the Security Scan Pipeline*" >> report.md
 
-      - name: Upload Reports as Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-reports
-          path: |
-            bandit-report.json
-            Terraform/checkov-report.json
-            report.md
-          retention-days: 30
+      # - name: Upload Reports as Artifacts
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: security-reports
+      #     path: |
+      #       bandit-report.json
+      #       Terraform/checkov-report.json
+      #       report.md
+      #     retention-days: 30
+
+       
+      - name: Upload Reports to S3
+        env:
+          AWS_REGION: ap-south-1
+          REPO_NAME: ${{ github.repository }}
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Define S3 bucket (replace with your bucket name)
+          S3_BUCKET="github-pullrequest-reports"
+
+          # Construct prefix: repo/branch/commit/
+          PREFIX="${REPO_NAME}/${BRANCH_NAME}/${COMMIT_ID}"
+
+          echo "Uploading reports to s3://${S3_BUCKET}/${PREFIX}/"
+
+          # Upload each report file
+          aws s3 cp bandit-report.json s3://${S3_BUCKET}/${PREFIX}/bandit-report.json
+          aws s3 cp Terraform/checkov-report.json s3://${S3_BUCKET}/${PREFIX}/checkov-report.json
+          aws s3 cp report.md s3://${S3_BUCKET}/${PREFIX}/report.md
 
       - name: Post Security Scan Summary to PR
         uses: marocchino/sticky-pull-request-comment@v2
