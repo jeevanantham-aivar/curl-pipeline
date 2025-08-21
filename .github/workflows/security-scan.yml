@@ -82,11 +82,11 @@ jobs:
               LINE=$(echo "$issue" | jq -r '.file_line_range[0]')
               BODY=$(echo "$issue" | jq -r '.check_id + ": " + .check_name')
 
-              if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
+               if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
+                # Construct the full path relative to the repository root.
+                # Since Checkov runs in 'Terraform/' and its file_path is relative to that,
+                # we must prepend 'Terraform/' to get the correct repository-relative path.
                 DISPLAY_PATH="Terraform/${PATH_TO_FILE}"
-                if [[ "$DISPLAY_PATH" == "Terraform/"* ]]; then
-                  DISPLAY_PATH="${DISPLAY_PATH#Terraform/}"
-                fi
 
                 echo "Posting comment for: $BODY at $DISPLAY_PATH:$LINE"
                 curl -L -X POST \
