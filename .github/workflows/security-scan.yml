@@ -83,7 +83,7 @@ jobs:
               BODY=$(echo "$issue" | jq -r '.check_id + ": " + .check_name')
 
               if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
-                DISPLAY_PATH="${PATH_TO_FILE}"
+                DISPLAY_PATH="Terraform/${PATH_TO_FILE}"
                 if [[ "$DISPLAY_PATH" == "Terraform/"* ]]; then
                   DISPLAY_PATH="${DISPLAY_PATH#Terraform/}"
                 fi
@@ -102,7 +102,7 @@ jobs:
                   }"
 
                    echo "------ DEBUGGING PR COMMENT PAYLOAD ------"
-                    echo "API URL: https://api.github.com/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments"
+                    echo "API URL: https://api.github.com/repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments"
                     echo "BODY: $BODY"
                     echo "COMMIT_ID: $COMMIT_ID"
                     echo "PATH: $DISPLAY_PATH"
