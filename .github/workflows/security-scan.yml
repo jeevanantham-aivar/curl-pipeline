@@ -74,7 +74,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          COMMIT_ID: ${{ github.sha }}
+          COMMIT_ID: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ -f Terraform/checkov-report.json ] && jq -e '.results.failed_checks | length > 0' Terraform/checkov-report.json > /dev/null; then
             jq -c '.results.failed_checks[]' Terraform/checkov-report.json | while read -r issue; do
