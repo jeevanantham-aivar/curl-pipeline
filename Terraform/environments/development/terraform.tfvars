@@ -8,7 +8,7 @@ aws_region = "ap-south-1"
 environment = "dev"
 
 # Project name
-project_name = "security-scan-pipeline-update"
+project_name = "security-scan-pipeline-updatef"
 
 # EC2 variables
 ami_id = "ami-0144277607031eca2"  # Amazon Linux 2 AMI in us-east-1
