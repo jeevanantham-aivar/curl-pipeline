@@ -261,19 +261,18 @@ jobs:
             REPO_NAME: ${{ github.repository }}
             BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
             COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+            ENVIRONMENT: ${{ env.ENVIRONMENT }}  # or ${{ inputs.environment }} in a reusable workflow
         run: |
-            # Define S3 bucket (replace with your bucket name)
             S3_BUCKET="github-pullrequest-reports"
-
-            # Construct prefix: repo/branch/commit/
-            PREFIX="${REPO_NAME}-${BRANCH_NAME}/${COMMIT_ID}"
+            # This results in <repo>/<branch>/<environment>/
+            PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
 
             echo "Uploading reports to s3://${S3_BUCKET}/${PREFIX}/"
 
-            # Upload each report file
-            aws s3 cp bandit-report.json s3://${S3_BUCKET}/${PREFIX}/bandit-report.json
-            aws s3 cp Terraform/checkov-report.json s3://${S3_BUCKET}/${PREFIX}/checkov-report.json
-            aws s3 cp report.md s3://${S3_BUCKET}/${PREFIX}/report.md
+            aws s3 cp bandit-report.json s3://${S3_BUCKET}/${PREFIX}/bandit-report.json || true
+            aws s3 cp Terraform/checkov-report.json s3://${S3_BUCKET}/${PREFIX}/checkov-report.json || true
+            aws s3 cp report.md s3://${S3_BUCKET}/${PREFIX}/report.md || true
+
 
       - name: Post Security Scan Summary to PR
         uses: marocchino/sticky-pull-request-comment@v2
