@@ -161,8 +161,9 @@ jobs:
     
       - name: Format Reports
         run: |
-            echo "# :shield: Security Scan Report for [${ENVIRONMENT}]" > report.md
-            echo "" >> report.md
+            REPORT="report-${ENVIRONMENT}.md"
+            echo "# :shield: Security Scan Report for [${ENVIRONMENT}]" > $REPORT
+            echo "" >> $REPORT
 
             CHECKOV_PASSED=$(jq '.summary.passed' Terraform/checkov-report.json 2>/dev/null || echo "0")
             CHECKOV_FAILED=$(jq '.summary.failed' Terraform/checkov-report.json 2>/dev/null || echo "0")
@@ -186,13 +187,13 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            } >> report.md
+            } >> $REPORT
 
             export REPO_URL="https://github.com/${GITHUB_REPOSITORY}"
             export BRANCH="${GITHUB_HEAD_REF:-$(git rev-parse --abbrev-ref HEAD)}"
 
-            echo "## :cloud: Checkov Detailed Report" >> report.md
-            echo "" >> report.md
+            echo "## :cloud: Checkov Detailed Report" >> $REPORT
+            echo "" >> $REPORT
 
             if [ -f Terraform/checkov-report.json ]; then
             FAILED=$(jq '.results.failed_checks | length' Terraform/checkov-report.json 2>/dev/null || echo "0")
@@ -205,7 +206,7 @@ jobs:
                         ((.file_line_range | type) == "array" and (.file_line_range | length) > 0)
                     then
                         "  - **Location:** [`" + (.file_path | ltrimstr("/")) + ":" + ((.file_line_range[0]|tostring) // "?") + "`]" +
-                        "(" + $repo_url + "/blob/" + $branch + "/Terraform/" + (.file_path | ltrimstr("/")) + "#L" + ((.file_line_range[0]|tostring) // "") + ")\n"
+                        "(" + $repo_url + "/blob/" + $branch + "/Terraform/" + (.file_path | ltrimstr("/")) + "#L" + ((.file_line_range|tostring) // "") + ")\n"
                     elif .resource_address then
                         "  - **Resource:** `" + .resource_address + "`\n"
                     else "" end
@@ -213,20 +214,20 @@ jobs:
                     "  - **Severity:** " + ((.severity // "N/A")) + "\n" +
                     "  - **Guideline:** " + ((.guideline // "N/A")) + "\n" +
                     "  - **Description:** " + ((.description // .check_name // "No description provided.")) + "\n"
-                ' Terraform/checkov-report.json >> report.md
+                ' Terraform/checkov-report.json >> $REPORT
             else
-                echo ":white_check_mark: **No failed infrastructure checks found!**" >> report.md
+                echo ":white_check_mark: **No failed infrastructure checks found!**" >> $REPORT
             fi
             else
-            echo ":warning: Checkov report not generated." >> report.md
+            echo ":warning: Checkov report not generated." >> $REPORT
             fi
 
-            echo "" >> report.md
-            echo "---" >> report.md
-            echo "" >> report.md
+            echo "" >> $REPORT
+            echo "---" >> $REPORT
+            echo "" >> $REPORT
 
-            echo "## :snake: Bandit Detailed Report" >> report.md
-            echo "" >> report.md
+            echo "## :snake: Bandit Detailed Report" >> $REPORT
+            echo "" >> $REPORT
 
             if [ -f bandit-report.json ]; then
             COUNT=$(jq '.results | length' bandit-report.json 2>/dev/null || echo "0")
@@ -240,17 +241,18 @@ jobs:
                     "- **Confidence:** " + (.issue_confidence // "N/A") + "\n" +
                     "- **CWE:** [" + ((.issue_cwe.id | tostring) // "N/A") + "](" + (.issue_cwe.link // "#") + ")\n" +
                     "---\n"
-                ' bandit-report.json >> report.md
+                ' bandit-report.json >> $REPORT
             else
-                echo ":white_check_mark: **No Bandit issues found!**" >> report.md
+                echo ":white_check_mark: **No Bandit issues found!**" >> $REPORT
             fi
             else
-            echo ":warning: Bandit report not generated." >> report.md
+            echo ":warning: Bandit report not generated." >> $REPORT
             fi
 
-            echo "" >> report.md
-            echo "---" >> report.md
-            echo "*This report was generated automatically by the Security Scan Pipeline*" >> report.md
+            echo "" >> $REPORT
+            echo "---" >> $REPORT
+            echo "*This report was generated automatically by the Security Scan Pipeline*" >> $REPORT
+
 
    
 
@@ -261,17 +263,16 @@ jobs:
             REPO_NAME: ${{ github.repository }}
             BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
             COMMIT_ID: ${{ github.event.pull_request.head.sha }}
-            ENVIRONMENT: ${{ env.ENVIRONMENT }}  # or ${{ inputs.environment }} in a reusable workflow
+            ENVIRONMENT: ${{ inputs.environment }}
         run: |
             S3_BUCKET="github-pullrequest-reports"
-            # This results in <repo>/<branch>/<environment>/
             PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
+            REPORT="report-${ENVIRONMENT}.md"
 
             echo "Uploading reports to s3://${S3_BUCKET}/${PREFIX}/"
-
             aws s3 cp bandit-report.json s3://${S3_BUCKET}/${PREFIX}/bandit-report.json || true
             aws s3 cp Terraform/checkov-report.json s3://${S3_BUCKET}/${PREFIX}/checkov-report.json || true
-            aws s3 cp report.md s3://${S3_BUCKET}/${PREFIX}/report.md || true
+            aws s3 cp $REPORT s3://${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md || true
 
 
       - name: Post Security Scan Summary to PR
