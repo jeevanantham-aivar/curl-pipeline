@@ -161,7 +161,7 @@ jobs:
     
       - name: Format Reports
         run: |
-            echo "# :shield: Security Scan Report" > report.md
+            echo "# :shield: Security Scan Report for [${ENVIRONMENT}]" > report.md
             echo "" >> report.md
 
             CHECKOV_PASSED=$(jq '.summary.passed' Terraform/checkov-report.json 2>/dev/null || echo "0")
