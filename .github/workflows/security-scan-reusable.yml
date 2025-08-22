@@ -255,7 +255,6 @@ jobs:
 
 
    
-
      
       - name: Upload Reports to S3
         env:
@@ -263,7 +262,7 @@ jobs:
             REPO_NAME: ${{ github.repository }}
             BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
             COMMIT_ID: ${{ github.event.pull_request.head.sha }}
-            ENVIRONMENT: ${{ inputs.environment }}
+            ENVIRONMENT: ${{ env.ENVIRONMENT }}
         run: |
             S3_BUCKET="github-pullrequest-reports"
             PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
@@ -278,4 +277,4 @@ jobs:
       - name: Post Security Scan Summary to PR
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-            path: report.md
+            path: report-${{ env.ENVIRONMENT }}.md
