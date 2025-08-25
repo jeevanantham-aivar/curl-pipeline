@@ -1,49 +1,49 @@
-name: Daily Repo Backup
+# name: Daily Repo Backup
 
-on:
-  schedule:
-    # GitHub Actions uses UTC. 12:00 IST = 06:30 UTC
-    # - cron: '30 6 * * *'
-    - cron: "*/2 * * * *"
-  workflow_dispatch:
+# on:
+#   schedule:
+#     # GitHub Actions uses UTC. 12:00 IST = 06:30 UTC
+#     # - cron: '30 6 * * *'
+#     - cron: "*/2 * * * *"
+#   workflow_dispatch:
 
-jobs:
-  backup-and-upload:
-    runs-on: ubuntu-latest
+# jobs:
+#   backup-and-upload:
+#     runs-on: ubuntu-latest
 
-    permissions:
-      id-token: write   # for OIDC
-      contents: read    # to checkout
+#     permissions:
+#       id-token: write   # for OIDC
+#       contents: read    # to checkout
 
-    env:
-      AWS_REGION: ap-south-1
-      # Choose one: set this as a repo variable or secret
-      S3_BUCKET: githubbackuup-testing
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v5
-        with:
-          ref: main
-          lfs: true
-          fetch-depth: 0
+#     env:
+#       AWS_REGION: ap-south-1
+#       # Choose one: set this as a repo variable or secret
+#       S3_BUCKET: githubbackuup-testing
+#     steps:
+#       - name: Checkout repo
+#         uses: actions/checkout@v5
+#         with:
+#           ref: main
+#           lfs: true
+#           fetch-depth: 0
 
-      - name: Derive names (repo/date/filename in IST)
-        run: |
-          echo "REPO_NAME=${GITHUB_REPOSITORY#*/}" >> $GITHUB_ENV
-          echo "DATE=$(TZ=Asia/Kolkata date +'%Y-%m-%d')" >> $GITHUB_ENV
-          echo "STAMP=$(TZ=Asia/Kolkata date +'%Y%m%dT%H%M%S')" >> $GITHUB_ENV
-          echo "ARCHIVE=${REPO_NAME}-main-${STAMP}.tar.gz" >> $GITHUB_ENV
+#       - name: Derive names (repo/date/filename in IST)
+#         run: |
+#           echo "REPO_NAME=${GITHUB_REPOSITORY#*/}" >> $GITHUB_ENV
+#           echo "DATE=$(TZ=Asia/Kolkata date +'%Y-%m-%d')" >> $GITHUB_ENV
+#           echo "STAMP=$(TZ=Asia/Kolkata date +'%Y%m%dT%H%M%S')" >> $GITHUB_ENV
+#           echo "ARCHIVE=${REPO_NAME}-main-${STAMP}.tar.gz" >> $GITHUB_ENV
 
-      - name: Create archive (exclude VCS metadata)
-        run: tar --exclude-vcs -czf "$ARCHIVE" .
+#       - name: Create archive (exclude VCS metadata)
+#         run: tar --exclude-vcs -czf "$ARCHIVE" .
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::302263040839:role/Githubactions
-          aws-region: ap-south-1
+#       - name: Configure AWS Credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           role-to-assume: arn:aws:iam::302263040839:role/Githubactions
+#           aws-region: ap-south-1
 
-      - name: Upload to S3 with repo/date prefix
-        run: |
-          aws s3 cp "$ARCHIVE" "s3://${S3_BUCKET}/${REPO_NAME}/${DATE}/${ARCHIVE}"
+#       - name: Upload to S3 with repo/date prefix
+#         run: |
+#           aws s3 cp "$ARCHIVE" "s3://${S3_BUCKET}/${REPO_NAME}/${DATE}/${ARCHIVE}"
 
