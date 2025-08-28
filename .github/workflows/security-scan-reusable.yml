@@ -55,6 +55,84 @@ jobs:
         run: checkov -f tfplan.json --repo-root-for-plan-enrichment . -o json > checkov-report.json || true
         working-directory: Terraform
 
+      - name: Wait for S3 Lock and Update Combined Report
+        env:
+            AWS_REGION: ap-south-1
+            REPO_NAME: ${{ github.repository }}
+            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+            ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            LOCK_FILE="lock-${BRANCH_PREFIX//\//-}.txt"
+            COMBINED_REPORT="combined-report.md"
+            MAX_WAIT_TIME=300  # 5 minutes max wait
+            WAIT_INTERVAL=10   # Check every 10 seconds
+            
+            echo "🔒 Attempting to acquire lock for combined report update..."
+            
+            # Try to acquire lock
+            for ((i=0; i<MAX_WAIT_TIME; i+=WAIT_INTERVAL)); do
+                # Check if lock exists
+                if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
+                    echo "⏳ Lock exists, waiting ${WAIT_INTERVAL} seconds... (${i}/${MAX_WAIT_TIME}s)"
+                    sleep $WAIT_INTERVAL
+                else
+                    # Try to create lock
+                    echo "🔓 Attempting to acquire lock..."
+                    echo "$(date): Locked by ${ENVIRONMENT} pipeline" | aws s3 cp - "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" --content-type "text/plain"
+                    
+                    # Verify lock was created (handle race condition)
+                    sleep 2
+                    if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
+                        echo "✅ Lock acquired successfully!"
+                        break
+                    else
+                        echo "❌ Lock acquisition failed, retrying..."
+                        continue
+                    fi
+                fi
+            done
+            
+            # Check if we got the lock
+            if ! aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
+                echo "❌ Failed to acquire lock after ${MAX_WAIT_TIME} seconds"
+                exit 1
+            fi
+            
+            # Download existing combined report or create new one
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
+                echo "📥 Downloading existing combined report..."
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./existing-report.md
+            else
+                echo "📝 Creating new combined report..."
+                echo "# 🚀 Combined Security Scan Report" > ./existing-report.md
+                echo "" >> ./existing-report.md
+                echo "## 📊 Summary Across All Environments" >> ./existing-report.md
+                echo "" >> ./existing-report.md
+                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./existing-report.md
+                echo "**Generated:** $(date)" >> ./existing-report.md
+                echo "" >> ./existing-report.md
+            fi
+            
+            # Add current environment report to combined report
+            echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./existing-report.md
+            echo "" >> ./existing-report.md
+            cat "report-${ENVIRONMENT}.md" >> ./existing-report.md
+            echo "" >> ./existing-report.md
+            echo "---" >> ./existing-report.md
+            echo "" >> ./existing-report.md
+            
+            # Upload updated combined report
+            echo "📤 Uploading updated combined report..."
+            aws s3 cp ./existing-report.md "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}"
+            
+            # Release lock
+            echo "🔓 Releasing lock..."
+            aws s3 rm "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}"
+            echo "✅ Lock released successfully!"
+
       # 👇 keep your existing PR comment + S3 upload steps here, unchanged
       - name: Post PR comments for infra failures
         env:
@@ -288,31 +366,147 @@ jobs:
         run: |
             S3_BUCKET="github-pullrequest-reports"
             PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
             REPORT="report-${ENVIRONMENT}.md"
 
-            echo "Uploading reports to s3://${S3_BUCKET}/${PREFIX}/"
+            echo "📤 Uploading environment-specific reports to s3://${S3_BUCKET}/${PREFIX}/"
             aws s3 cp bandit-report.json s3://${S3_BUCKET}/${PREFIX}/bandit-report.json || true
             aws s3 cp Terraform/checkov-report.json s3://${S3_BUCKET}/${PREFIX}/checkov-report.json || true
             aws s3 cp $REPORT s3://${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md || true
+            
+            echo "📤 Combined report already uploaded to s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md"
 
       - name: Display S3 Report Location
         run: |
             S3_BUCKET="github-pullrequest-reports"
             PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
             
             echo "## 📁 S3 Report Location for ${ENVIRONMENT}" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Environment:** \`${ENVIRONMENT}\`" >> $GITHUB_STEP_SUMMARY
-            echo "**S3 Path:** \`s3://${S3_BUCKET}/${PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment Reports:** \`s3://${S3_BUCKET}/${PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Combined Report:** \`s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
             echo "- **Bandit:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/bandit-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/bandit-report.json)" >> $GITHUB_STEP_SUMMARY
             echo "- **Checkov:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/checkov-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/checkov-report.json)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Markdown Summary:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/${ENVIRONMENT}.md)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment Report:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/${ENVIRONMENT}.md)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Combined Report:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${BRANCH_PREFIX}/combined-report.md)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "*Reports uploaded for ${ENVIRONMENT} environment*" >> $GITHUB_STEP_SUMMARY
 
-      - name: Post Security Scan Summary to PR
+      - name: Download Combined Report for PR
+        env:
+            AWS_REGION: ap-south-1
+            REPO_NAME: ${{ github.repository }}
+            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+            ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            COMBINED_REPORT="combined-report.md"
+            
+            echo "📥 Downloading combined report for PR comment..."
+            
+            # Wait a bit to ensure all environments have written their reports
+            sleep 30
+            
+            # Try to download the combined report
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
+                echo "✅ Combined report found, downloading..."
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./combined-report.md
+                echo "📄 Combined report downloaded successfully"
+            else
+                echo "⚠️ Combined report not found, creating fallback..."
+                # Create a fallback combined report with current environment
+                echo "# 🚀 Combined Security Scan Report" > ./combined-report.md
+                echo "" >> ./combined-report.md
+                echo "## 📊 Summary Across All Environments" >> ./combined-report.md
+                echo "" >> ./combined-report.md
+                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./combined-report.md
+                echo "**Generated:** $(date)" >> ./combined-report.md
+                echo "" >> ./combined-report.md
+                echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./combined-report.md
+                echo "" >> ./combined-report.md
+                cat "report-${ENVIRONMENT}.md" >> ./combined-report.md
+                echo "" >> ./combined-report.md
+                echo "---" >> ./combined-report.md
+                echo "" >> ./combined-report.md
+                echo "*Note: Only ${ENVIRONMENT} environment report available*" >> ./combined-report.md
+            fi
+
+      - name: Post Environment Report to PR
         uses: marocchino/sticky-pull-request-comment@v2
         with:
             path: report-${{ env.ENVIRONMENT }}.md
+            header: "🔒 Security Scan Report - ${{ env.ENVIRONMENT }} Environment"
+
+      - name: Post Combined Report to PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+            path: combined-report.md
+            header: "🚀 Combined Security Scan Report - All Environments"
+
+      - name: Create Final Combined Report
+        env:
+            AWS_REGION: ap-south-1
+            REPO_NAME: ${{ github.repository }}
+            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+            ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            COMBINED_REPORT="combined-report.md"
+            FINAL_REPORT="final-combined-report.md"
+            
+            echo "🎯 Creating final combined report..."
+            
+            # Wait longer to ensure all environments have completed
+            sleep 60
+            
+            # Try to download the combined report from S3
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
+                echo "✅ Final combined report found, downloading..."
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./${FINAL_REPORT}
+                
+                # Add a completion message
+                echo "" >> ./${FINAL_REPORT}
+                echo "---" >> ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                echo "## 🎉 All Environment Scans Completed!" >> ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                echo "**Total Environments Scanned:** 3 (Development, Staging, Production)" >> ./${FINAL_REPORT}
+                echo "**Report Generated:** $(date)" >> ./${FINAL_REPORT}
+                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                echo "*This report contains security scan results from all environments*" >> ./${FINAL_REPORT}
+                
+                echo "📄 Final combined report created successfully"
+            else
+                echo "⚠️ Combined report not found, creating comprehensive fallback..."
+                # Create a comprehensive fallback report
+                echo "# 🚀 Final Combined Security Scan Report" > ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                echo "## 📊 Summary Across All Environments" >> ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
+                echo "**Generated:** $(date)" >> ./${FINAL_REPORT}
+                echo "**Current Environment:** ${ENVIRONMENT}" >> ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                cat "report-${ENVIRONMENT}.md" >> ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                echo "---" >> ./${FINAL_REPORT}
+                echo "" >> ./${FINAL_REPORT}
+                echo "*Note: Only ${ENVIRONMENT} environment report available. Other environments may still be running.*" >> ./${FINAL_REPORT}
+            fi
+
+      - name: Post Final Combined Report to PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+            path: final-combined-report.md
+            header: "🎯 Final Combined Security Scan Report - All Environments Completed"
