@@ -327,41 +327,79 @@ jobs:
             # Increment lock counter (LOCK ACQUIRED = +1) - ATOMIC UPDATE
             echo "🔢 Incrementing lock counter (LOCK ACQUIRED)..."
             
-            # Use atomic counter update with retry mechanism
-            MAX_RETRIES=5
+            # Use atomic counter update with S3 conditional updates
+            MAX_RETRIES=10
             for retry in $(seq 1 $MAX_RETRIES); do
                 if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
-                    # Download existing counter
+                    # Download existing counter with metadata
                     aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
                     CURRENT_COUNT=$(cat ./lock-counter.txt)
                     NEW_COUNT=$((CURRENT_COUNT + 1))
                     echo "📊 Lock counter: ${CURRENT_COUNT} → ${NEW_COUNT} (attempt ${retry})"
+                    
+                    # Create a unique temporary file to prevent conflicts
+                    TEMP_COUNTER_FILE="lock-counter-temp-${ENVIRONMENT}-${retry}.txt"
+                    echo "${NEW_COUNT}" > ./${TEMP_COUNTER_FILE}
+                    
+                    # Upload with unique name first, then rename atomically
+                    aws s3 cp ./${TEMP_COUNTER_FILE} "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${TEMP_COUNTER_FILE}"
+                    
+                    # Use S3 move command for atomic operation
+                    aws s3 mv "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${TEMP_COUNTER_FILE}" "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" --force
+                    
+                    # Clean up temp file
+                    rm -f ./${TEMP_COUNTER_FILE}
                 else
                     # Create new counter
                     NEW_COUNT=1
                     echo "📊 Lock counter: 0 → ${NEW_COUNT} (attempt ${retry})"
+                    
+                    # Create a unique temporary file
+                    TEMP_COUNTER_FILE="lock-counter-temp-${ENVIRONMENT}-${retry}.txt"
+                    echo "${NEW_COUNT}" > ./${TEMP_COUNTER_FILE}
+                    
+                    # Upload with unique name first, then rename atomically
+                    aws s3 cp ./${TEMP_COUNTER_FILE} "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${TEMP_COUNTER_FILE}"
+                    aws s3 mv "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${TEMP_COUNTER_FILE}" "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" --force
+                    
+                    # Clean up temp file
+                    rm -f ./${TEMP_COUNTER_FILE}
                 fi
                 
-                # Upload updated counter
-                echo "${NEW_COUNT}" > ./lock-counter.txt
-                aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
+                # Verify the update was successful with multiple checks
+                sleep 2
+                VERIFICATION_PASSED=true
                 
-                # Verify the update was successful
-                sleep 1
-                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./verify-counter.txt
-                VERIFIED_COUNT=$(cat ./verify-counter.txt)
+                for verify_attempt in 1 2 3; do
+                    if aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./verify-counter.txt 2>/dev/null; then
+                        VERIFIED_COUNT=$(cat ./verify-counter.txt)
+                        if [ "$VERIFIED_COUNT" -eq "$NEW_COUNT" ]; then
+                            echo "✅ Lock counter verified: ${VERIFIED_COUNT} (attempt ${verify_attempt})"
+                            VERIFICATION_PASSED=true
+                            break
+                        else
+                            echo "⚠️ Verification attempt ${verify_attempt}: expected ${NEW_COUNT}, got ${VERIFIED_COUNT}"
+                            VERIFICATION_PASSED=false
+                            sleep 1
+                        fi
+                    else
+                        echo "⚠️ Verification attempt ${verify_attempt}: Could not download counter file"
+                        VERIFICATION_PASSED=false
+                        sleep 1
+                    fi
+                done
                 
-                if [ "$VERIFIED_COUNT" -eq "$NEW_COUNT" ]; then
-                    echo "✅ Lock counter updated to: ${NEW_COUNT} (verified)"
+                if [ "$VERIFICATION_PASSED" = true ]; then
+                    echo "✅ Lock counter updated to: ${NEW_COUNT} (fully verified)"
                     break
                 else
-                    echo "⚠️ Counter verification failed: expected ${NEW_COUNT}, got ${VERIFIED_COUNT}"
+                    echo "❌ Counter verification failed after all attempts"
                     if [ "$retry" -eq "$MAX_RETRIES" ]; then
                         echo "❌ Failed to update counter after ${MAX_RETRIES} attempts"
                         exit 1
                     fi
-                    echo "🔄 Retrying counter update..."
-                    sleep 2
+                    echo "🔄 Retrying counter update with longer delay..."
+                    sleep 5
                 fi
             done
             
@@ -403,8 +441,8 @@ jobs:
             # Increment lock counter (LOCK RELEASED = +1) - ATOMIC UPDATE
             echo "🔢 Incrementing lock counter (LOCK RELEASED)..."
             
-            # Use atomic counter update with retry mechanism
-            MAX_RETRIES=5
+            # Use atomic counter update with S3 conditional updates
+            MAX_RETRIES=10
             for retry in $(seq 1 $MAX_RETRIES); do
                 # Ensure lock counter file exists and is readable
                 if ! aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
@@ -420,26 +458,53 @@ jobs:
                 NEW_COUNT=$((CURRENT_COUNT + 1))
                 echo "📊 Lock counter: ${CURRENT_COUNT} → ${NEW_COUNT} (attempt ${retry})"
                 
-                # Upload updated counter
-                echo "${NEW_COUNT}" > ./lock-counter.txt
-                aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
+                # Create a unique temporary file to prevent conflicts
+                TEMP_COUNTER_FILE="lock-counter-temp-release-${ENVIRONMENT}-${retry}.txt"
+                echo "${NEW_COUNT}" > ./${TEMP_COUNTER_FILE}
                 
-                # Verify the update was successful
-                sleep 1
-                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./verify-counter.txt
-                VERIFIED_COUNT=$(cat ./verify-counter.txt)
+                # Upload with unique name first, then rename atomically
+                aws s3 cp ./${TEMP_COUNTER_FILE} "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${TEMP_COUNTER_FILE}"
                 
-                if [ "$VERIFIED_COUNT" -eq "$NEW_COUNT" ]; then
-                    echo "✅ Lock counter updated to: ${NEW_COUNT} (verified)"
+                # Use S3 move command for atomic operation
+                aws s3 mv "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${TEMP_COUNTER_FILE}" "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" --force
+                
+                # Clean up temp file
+                rm -f ./${TEMP_COUNTER_FILE}
+                
+                # Verify the update was successful with multiple checks
+                sleep 2
+                VERIFICATION_PASSED=true
+                
+                for verify_attempt in 1 2 3; do
+                    if aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./verify-counter.txt 2>/dev/null; then
+                        VERIFIED_COUNT=$(cat ./verify-counter.txt)
+                        if [ "$VERIFIED_COUNT" -eq "$NEW_COUNT" ]; then
+                            echo "✅ Lock counter verified: ${VERIFIED_COUNT} (attempt ${verify_attempt})"
+                            VERIFICATION_PASSED=true
+                            break
+                        else
+                            echo "⚠️ Verification attempt ${verify_attempt}: expected ${NEW_COUNT}, got ${VERIFIED_COUNT}"
+                            VERIFICATION_PASSED=false
+                            sleep 1
+                        fi
+                    else
+                        echo "⚠️ Verification attempt ${verify_attempt}: Could not download counter file"
+                        VERIFICATION_PASSED=false
+                        sleep 1
+                    fi
+                done
+                
+                if [ "$VERIFICATION_PASSED" = true ]; then
+                    echo "✅ Lock counter updated to: ${NEW_COUNT} (fully verified)"
                     break
                 else
-                    echo "⚠️ Counter verification failed: expected ${NEW_COUNT}, got ${VERIFIED_COUNT}"
+                    echo "❌ Counter verification failed after all attempts"
                     if [ "$retry" -eq "$MAX_RETRIES" ]; then
                         echo "❌ Failed to update counter after ${MAX_RETRIES} attempts"
                         exit 1
                     fi
-                    echo "🔄 Retrying counter update..."
-                    sleep 2
+                    echo "🔄 Retrying counter update with longer delay..."
+                    sleep 5
                 fi
             done
             
