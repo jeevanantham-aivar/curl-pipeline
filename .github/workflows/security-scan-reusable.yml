@@ -689,8 +689,9 @@ jobs:
             COMBINED_REPORT="combined-report.md"
             FINAL_REPORT="final-combined-report.md"
             LOCK_COUNTER_FILE="lock-counter-${BRANCH_PREFIX//\//-}.txt"
+            FINAL_REPORT_LOCK="final-report-lock-${BRANCH_PREFIX//\//-}.txt"
             
-            echo "🎯 Creating final combined report..."
+            echo "🎯 Attempting to create final combined report..."
             
             # Check lock counter to ensure all environments completed
             if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
@@ -699,71 +700,71 @@ jobs:
                 echo "📊 Final lock counter: ${FINAL_COUNT}/6"
                 
                 if [ "$FINAL_COUNT" -ge 6 ]; then
-                    echo "🎉 All environments completed! Creating final report..."
+                    echo "🎉 All environments completed! Attempting to create final report..."
                     
-                    # Download the combined report from S3
-                    if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
-                        echo "✅ Final combined report found, downloading..."
-                        aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./${FINAL_REPORT}
-                        
-                        # Add a completion message
-                        echo "" >> ./${FINAL_REPORT}
-                        echo "---" >> ./${FINAL_REPORT}
-                        echo "" >> ./${FINAL_REPORT}
-                        echo "## 🎉 All Environment Scans Completed!" >> ./${FINAL_REPORT}
-                        echo "" >> ./${FINAL_REPORT}
-                        echo "**Total Environments Scanned:** 3 (Development, Staging, Production)" >> ./${FINAL_REPORT}
-                        echo "**Report Generated:** $(date)" >> ./${FINAL_REPORT}
-                        echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
-                        echo "**Lock Counter:** ${FINAL_COUNT}/6 ✅" >> ./${FINAL_REPORT}
-                        echo "" >> ./${FINAL_REPORT}
-                        echo "*This report contains security scan results from all environments*" >> ./${FINAL_REPORT}
-                        
-                        echo "📄 Final combined report created successfully"
+                    # Try to acquire final report lock (only one environment should succeed)
+                    if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${FINAL_REPORT_LOCK}" >/dev/null 2>&1; then
+                        echo "⏳ Another environment is already creating the final report, skipping..."
+                        echo "📝 Creating placeholder file to prevent step failure"
+                        echo "# Final report being created by another environment" > ./${FINAL_REPORT}
+                        echo "This environment skipped final report creation to avoid duplicates." >> ./${FINAL_REPORT}
+                        exit 0
                     else
-                        echo "❌ Combined report not found despite lock counter completion"
-                        exit 1
+                        echo "🔒 Acquiring final report lock..."
+                        echo "$(date): Final report being created by ${ENVIRONMENT} environment" | aws s3 cp - "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${FINAL_REPORT_LOCK}" --content-type "text/plain"
+                        
+                        # Verify lock was created
+                        sleep 2
+                        if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${FINAL_REPORT_LOCK}" >/dev/null 2>&1; then
+                            echo "✅ Final report lock acquired! Creating final report..."
+                            
+                            # Download the combined report from S3
+                            if aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./${FINAL_REPORT} 2>/dev/null; then
+                                echo "✅ Final combined report created successfully"
+                                
+                                # Add completion message
+                                echo "" >> ./${FINAL_REPORT}
+                                echo "---" >> ./${FINAL_REPORT}
+                                echo "" >> ./${FINAL_REPORT}
+                                echo "## 🎉 All Environment Scans Completed!" >> ./${FINAL_REPORT}
+                                echo "" >> ./${FINAL_REPORT}
+                                echo "**Total Environments Scanned:** 3 (Development, Staging, Production)" >> ./${FINAL_REPORT}
+                                echo "**Report Generated:** $(date)" >> ./${FINAL_REPORT}
+                                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
+                                echo "**Lock Counter:** ${FINAL_COUNT}/6 ✅" >> ./${FINAL_REPORT}
+                                echo "**Final Report Created By:** ${ENVIRONMENT} environment" >> ./${FINAL_REPORT}
+                                echo "" >> ./${FINAL_REPORT}
+                                echo "*This report contains security scan results from all environments*" >> ./${FINAL_REPORT}
+                                
+                                echo "📄 Final combined report created successfully by ${ENVIRONMENT}"
+                            else
+                                echo "❌ Failed to download combined report"
+                                # Release the lock
+                                aws s3 rm "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${FINAL_REPORT_LOCK}"
+                                exit 1
+                            fi
+                        else
+                            echo "❌ Failed to acquire final report lock, skipping..."
+                            echo "📝 Creating placeholder file to prevent step failure"
+                            echo "# Final report creation failed" > ./${FINAL_REPORT}
+                            echo "Failed to acquire final report lock." >> ./${FINAL_REPORT}
+                            exit 0
+                        fi
                     fi
                 else
                     echo "⚠️ Lock counter not reached target: ${FINAL_COUNT}/6"
-                    echo "Creating fallback report..."
-                    # Create a comprehensive fallback report
-                    echo "# 🚀 Final Combined Security Scan Report" > ./${FINAL_REPORT}
-                    echo "" >> ./${FINAL_REPORT}
-                    echo "## 📊 Summary Across All Environments" >> ./${FINAL_REPORT}
-                    echo "" >> ./${FINAL_REPORT}
-                    echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
-                    echo "**Generated:** $(date)" >> ./${FINAL_REPORT}
-                    echo "**Current Environment:** ${ENVIRONMENT}" >> ./${FINAL_REPORT}
-                    echo "**Lock Counter:** ${FINAL_COUNT}/6 ⚠️" >> ./${FINAL_REPORT}
-                    echo "" >> ./${FINAL_REPORT}
-                    echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./${FINAL_REPORT}
-                    echo "" >> ./${FINAL_REPORT}
-                    cat "${ENVIRONMENT}.md" >> ./${FINAL_REPORT}
-                    echo "" >> ./${FINAL_REPORT}
-                    echo "---" >> ./${FINAL_REPORT}
-                    echo "" >> ./${FINAL_REPORT}
-                    echo "*Note: Only ${ENVIRONMENT} environment report available. Lock counter: ${FINAL_COUNT}/6*" >> ./${FINAL_REPORT}
+                    echo "Skipping final report creation for this environment"
+                    echo "📝 Creating placeholder file to prevent step failure"
+                    echo "# Final report skipped" > ./${FINAL_REPORT}
+                    echo "Lock counter not reached target: ${FINAL_COUNT}/6" >> ./${FINAL_REPORT}
+                    exit 0
                 fi
             else
-                echo "⚠️ Lock counter file not found, creating fallback report..."
-                # Create a comprehensive fallback report
-                echo "# 🚀 Final Combined Security Scan Report" > ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                echo "## 📊 Summary Across All Environments" >> ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
-                echo "**Generated:** $(date)" >> ./${FINAL_REPORT}
-                echo "**Current Environment:** ${ENVIRONMENT}" >> ./${FINAL_REPORT}
-                echo "**Lock Counter:** Not found ⚠️" >> ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                cat "${ENVIRONMENT}.md" >> ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                echo "---" >> ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                echo "*Note: Only ${ENVIRONMENT} environment report available. Lock counter file not found.*" >> ./${FINAL_REPORT}
+                echo "⚠️ Lock counter file not found, skipping final report"
+                echo "📝 Creating placeholder file to prevent step failure"
+                echo "# Final report skipped" > ./${FINAL_REPORT}
+                echo "Lock counter file not found." >> ./${FINAL_REPORT}
+                exit 0
             fi
 
       - name: Post Final Combined Report to PR
@@ -771,3 +772,32 @@ jobs:
         with:
             path: final-combined-report.md
             header: "🎯 Final Combined Security Scan Report - All Environments Completed"
+
+      - name: Cleanup Final Report Lock
+        env:
+            AWS_REGION: ap-south-1
+            REPO_NAME: ${{ github.repository }}
+            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+            ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            FINAL_REPORT_LOCK="final-report-lock-${BRANCH_PREFIX//\//-}.txt"
+            
+            echo "🧹 Cleaning up final report lock..."
+            
+            # Only cleanup if this environment created the final report
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${FINAL_REPORT_LOCK}" >/dev/null 2>&1; then
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${FINAL_REPORT_LOCK}" ./lock-info.txt
+                LOCK_CONTENT=$(cat ./lock-info.txt)
+                
+                if echo "$LOCK_CONTENT" | grep -q "${ENVIRONMENT} environment"; then
+                    echo "✅ This environment created the final report, cleaning up lock..."
+                    aws s3 rm "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${FINAL_REPORT_LOCK}"
+                    echo "🧹 Final report lock cleaned up successfully"
+                else
+                    echo "⏭️ Another environment created the final report, skipping cleanup"
+                fi
+            else
+                echo "ℹ️ No final report lock found to cleanup"
+            fi
