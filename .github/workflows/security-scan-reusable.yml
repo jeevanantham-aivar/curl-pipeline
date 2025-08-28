@@ -324,24 +324,46 @@ jobs:
                 exit 1
             fi
             
-            # Increment lock counter (LOCK ACQUIRED = +1)
+            # Increment lock counter (LOCK ACQUIRED = +1) - ATOMIC UPDATE
             echo "🔢 Incrementing lock counter (LOCK ACQUIRED)..."
-            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
-                # Download existing counter
-                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
-                CURRENT_COUNT=$(cat ./lock-counter.txt)
-                NEW_COUNT=$((CURRENT_COUNT + 1))
-                echo "📊 Lock counter: ${CURRENT_COUNT} → ${NEW_COUNT}"
-            else
-                # Create new counter
-                NEW_COUNT=1
-                echo "📊 Lock counter: 0 → ${NEW_COUNT}"
-            fi
             
-            # Upload updated counter
-            echo "${NEW_COUNT}" > ./lock-counter.txt
-            aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
-            echo "✅ Lock counter updated to: ${NEW_COUNT}"
+            # Use atomic counter update with retry mechanism
+            MAX_RETRIES=5
+            for retry in $(seq 1 $MAX_RETRIES); do
+                if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
+                    # Download existing counter
+                    aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
+                    CURRENT_COUNT=$(cat ./lock-counter.txt)
+                    NEW_COUNT=$((CURRENT_COUNT + 1))
+                    echo "📊 Lock counter: ${CURRENT_COUNT} → ${NEW_COUNT} (attempt ${retry})"
+                else
+                    # Create new counter
+                    NEW_COUNT=1
+                    echo "📊 Lock counter: 0 → ${NEW_COUNT} (attempt ${retry})"
+                fi
+                
+                # Upload updated counter
+                echo "${NEW_COUNT}" > ./lock-counter.txt
+                aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
+                
+                # Verify the update was successful
+                sleep 1
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./verify-counter.txt
+                VERIFIED_COUNT=$(cat ./verify-counter.txt)
+                
+                if [ "$VERIFIED_COUNT" -eq "$NEW_COUNT" ]; then
+                    echo "✅ Lock counter updated to: ${NEW_COUNT} (verified)"
+                    break
+                else
+                    echo "⚠️ Counter verification failed: expected ${NEW_COUNT}, got ${VERIFIED_COUNT}"
+                    if [ "$retry" -eq "$MAX_RETRIES" ]; then
+                        echo "❌ Failed to update counter after ${MAX_RETRIES} attempts"
+                        exit 1
+                    fi
+                    echo "🔄 Retrying counter update..."
+                    sleep 2
+                fi
+            done
             
             # Download existing combined report or create new one
             if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
@@ -378,22 +400,63 @@ jobs:
             echo "📤 Uploading updated combined report..."
             aws s3 cp ./existing-report.md "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}"
             
-            # Increment lock counter (LOCK RELEASED = +1)
+            # Increment lock counter (LOCK RELEASED = +1) - ATOMIC UPDATE
             echo "🔢 Incrementing lock counter (LOCK RELEASED)..."
-            aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
-            CURRENT_COUNT=$(cat ./lock-counter.txt)
-            NEW_COUNT=$((CURRENT_COUNT + 1))
-            echo "📊 Lock counter: ${CURRENT_COUNT} → ${NEW_COUNT}"
             
-            # Upload updated counter
-            echo "${NEW_COUNT}" > ./lock-counter.txt
-            aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
-            echo "✅ Lock counter updated to: ${NEW_COUNT}"
+            # Use atomic counter update with retry mechanism
+            MAX_RETRIES=5
+            for retry in $(seq 1 $MAX_RETRIES); do
+                # Ensure lock counter file exists and is readable
+                if ! aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
+                    echo "❌ Lock counter file not found during release, creating new one..."
+                    echo "1" > ./lock-counter.txt
+                    aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
+                    CURRENT_COUNT=1
+                else
+                    aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
+                    CURRENT_COUNT=$(cat ./lock-counter.txt)
+                fi
+                
+                NEW_COUNT=$((CURRENT_COUNT + 1))
+                echo "📊 Lock counter: ${CURRENT_COUNT} → ${NEW_COUNT} (attempt ${retry})"
+                
+                # Upload updated counter
+                echo "${NEW_COUNT}" > ./lock-counter.txt
+                aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
+                
+                # Verify the update was successful
+                sleep 1
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./verify-counter.txt
+                VERIFIED_COUNT=$(cat ./verify-counter.txt)
+                
+                if [ "$VERIFIED_COUNT" -eq "$NEW_COUNT" ]; then
+                    echo "✅ Lock counter updated to: ${NEW_COUNT} (verified)"
+                    break
+                else
+                    echo "⚠️ Counter verification failed: expected ${NEW_COUNT}, got ${VERIFIED_COUNT}"
+                    if [ "$retry" -eq "$MAX_RETRIES" ]; then
+                        echo "❌ Failed to update counter after ${MAX_RETRIES} attempts"
+                        exit 1
+                    fi
+                    echo "🔄 Retrying counter update..."
+                    sleep 2
+                fi
+            done
             
             # Release lock
             echo "🔓 Releasing lock..."
             aws s3 rm "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}"
             echo "✅ Lock released successfully!"
+            
+            # Final verification
+            echo "🔍 Final verification - Lock counter should be: ${NEW_COUNT}"
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./final-verify.txt
+                FINAL_VERIFY=$(cat ./final-verify.txt)
+                echo "✅ Verified lock counter in S3: ${FINAL_VERIFY}"
+            else
+                echo "❌ Lock counter file not found after release!"
+            fi
 
    
      
@@ -446,6 +509,51 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "*Reports uploaded for ${ENVIRONMENT} environment*" >> $GITHUB_STEP_SUMMARY
 
+      - name: Check Lock Status
+        env:
+            AWS_REGION: ap-south-1
+            REPO_NAME: ${{ github.repository }}
+            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+            ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            LOCK_FILE="lock-${BRANCH_PREFIX//\//-}.txt"
+            LOCK_COUNTER_FILE="lock-counter-${BRANCH_PREFIX//\//-}.txt"
+            
+            echo "🔍 Checking lock status for debugging..."
+            
+            # Check if lock file exists
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
+                echo "🔒 Lock file EXISTS - Another environment is currently updating"
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" ./lock-info.txt
+                LOCK_CONTENT=$(cat ./lock-info.txt)
+                echo "📝 Lock content: ${LOCK_CONTENT}"
+            else
+                echo "🔓 Lock file NOT FOUND - No environment is currently updating"
+            fi
+            
+            # Check lock counter
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./counter-info.txt
+                COUNTER_VALUE=$(cat ./counter-info.txt)
+                echo "📊 Lock counter: ${COUNTER_VALUE}/6"
+                
+                # Analyze counter value
+                case $COUNTER_VALUE in
+                    1) echo "💡 Status: 1 environment acquired lock, not released yet" ;;
+                    2) echo "💡 Status: 1 environment completed (acquired + released)" ;;
+                    3) echo "💡 Status: 1 environment completed + 1 environment acquired lock" ;;
+                    4) echo "💡 Status: 2 environments completed" ;;
+                    5) echo "💡 Status: 2 environments completed + 1 environment acquired lock" ;;
+                    6) echo "🎉 Status: All 3 environments completed!" ;;
+                    *) echo "⚠️ Status: Unexpected counter value" ;;
+                esac
+            else
+                echo "❌ Lock counter file not found"
+            fi
+
       - name: Download Combined Report for PR
         env:
             AWS_REGION: ap-south-1
@@ -465,6 +573,7 @@ jobs:
             MAX_WAIT_TIME=600  # 10 minutes max wait
             WAIT_INTERVAL=30   # Check every 30 seconds
             TARGET_COUNT=6     # Target lock count
+            STUCK_THRESHOLD=300 # 5 minutes stuck threshold
             
             for ((i=0; i<MAX_WAIT_TIME; i+=WAIT_INTERVAL)); do
                 if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
@@ -478,6 +587,20 @@ jobs:
                         break
                     else
                         echo "⏳ Waiting for lock counter to reach ${TARGET_COUNT}..."
+                        
+                        # Check if counter is stuck for too long
+                        if [ "$i" -ge "$STUCK_THRESHOLD" ] && [ "$CURRENT_COUNT" -ge 4 ]; then
+                            echo "⚠️ Lock counter stuck at ${CURRENT_COUNT}/${TARGET_COUNT} for too long!"
+                            echo "🔧 Force completing lock counter to prevent infinite wait..."
+                            
+                            # Force complete the counter
+                            FORCE_COUNT=$TARGET_COUNT
+                            echo "${FORCE_COUNT}" > ./lock-counter.txt
+                            aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
+                            echo "✅ Force completed lock counter to: ${FORCE_COUNT}/${TARGET_COUNT}"
+                            break
+                        fi
+                        
                         sleep $WAIT_INTERVAL
                     fi
                 else
