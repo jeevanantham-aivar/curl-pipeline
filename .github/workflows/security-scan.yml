@@ -14,21 +14,22 @@ permissions:
 jobs:
   development-scan:
     if: startsWith(github.head_ref, 'feature/')
-    name: Terraform Plan and Checkov (development)
+    name: Security Scan [checkov + bandit] (development)
     uses: ./.github/workflows/security-scan-reusable.yml
     with:
       environment: development
-
-  staging-scan:
-    if: startsWith(github.head_ref, 'feature/')
-    name: Terraform Plan and Checkov (staging)
-    uses: ./.github/workflows/security-scan-reusable.yml
-    with:
-      environment: staging
+  
 
   production-scan:
     if: startsWith(github.head_ref, 'feature/')
-    name: Terraform Plan and Checkov (production)
+    name: Security Scan [checkov + bandit] (production)
     uses: ./.github/workflows/security-scan-reusable.yml
     with:
       environment: production
+
+  staging-scan:
+    if: startsWith(github.head_ref, 'feature/')
+    name: Security Scan [checkov + bandit] (staging)
+    uses: ./.github/workflows/security-scan-reusable.yml
+    with:
+      environment: staging
