@@ -55,83 +55,7 @@ jobs:
         run: checkov -f tfplan.json --repo-root-for-plan-enrichment . -o json > checkov-report.json || true
         working-directory: Terraform
 
-      - name: Wait for S3 Lock and Update Combined Report
-        env:
-            AWS_REGION: ap-south-1
-            REPO_NAME: ${{ github.repository }}
-            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
-            ENVIRONMENT: ${{ env.ENVIRONMENT }}
-        run: |
-            S3_BUCKET="github-pullrequest-reports"
-            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
-            LOCK_FILE="lock-${BRANCH_PREFIX//\//-}.txt"
-            COMBINED_REPORT="combined-report.md"
-            MAX_WAIT_TIME=300  # 5 minutes max wait
-            WAIT_INTERVAL=10   # Check every 10 seconds
-            
-            echo "🔒 Attempting to acquire lock for combined report update..."
-            
-            # Try to acquire lock
-            for ((i=0; i<MAX_WAIT_TIME; i+=WAIT_INTERVAL)); do
-                # Check if lock exists
-                if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
-                    echo "⏳ Lock exists, waiting ${WAIT_INTERVAL} seconds... (${i}/${MAX_WAIT_TIME}s)"
-                    sleep $WAIT_INTERVAL
-                else
-                    # Try to create lock
-                    echo "🔓 Attempting to acquire lock..."
-                    echo "$(date): Locked by ${ENVIRONMENT} pipeline" | aws s3 cp - "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" --content-type "text/plain"
-                    
-                    # Verify lock was created (handle race condition)
-                    sleep 2
-                    if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
-                        echo "✅ Lock acquired successfully!"
-                        break
-                    else
-                        echo "❌ Lock acquisition failed, retrying..."
-                        continue
-                    fi
-                fi
-            done
-            
-            # Check if we got the lock
-            if ! aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
-                echo "❌ Failed to acquire lock after ${MAX_WAIT_TIME} seconds"
-                exit 1
-            fi
-            
-            # Download existing combined report or create new one
-            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
-                echo "📥 Downloading existing combined report..."
-                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./existing-report.md
-            else
-                echo "📝 Creating new combined report..."
-                echo "# 🚀 Combined Security Scan Report" > ./existing-report.md
-                echo "" >> ./existing-report.md
-                echo "## 📊 Summary Across All Environments" >> ./existing-report.md
-                echo "" >> ./existing-report.md
-                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./existing-report.md
-                echo "**Generated:** $(date)" >> ./existing-report.md
-                echo "" >> ./existing-report.md
-            fi
-            
-            # Add current environment report to combined report
-            echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./existing-report.md
-            echo "" >> ./existing-report.md
-            cat "report-${ENVIRONMENT}.md" >> ./existing-report.md
-            echo "" >> ./existing-report.md
-            echo "---" >> ./existing-report.md
-            echo "" >> ./existing-report.md
-            
-            # Upload updated combined report
-            echo "📤 Uploading updated combined report..."
-            aws s3 cp ./existing-report.md "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}"
-            
-            # Release lock
-            echo "🔓 Releasing lock..."
-            aws s3 rm "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}"
-            echo "✅ Lock released successfully!"
+
 
       # 👇 keep your existing PR comment + S3 upload steps here, unchanged
       - name: Post PR comments for infra failures
@@ -353,6 +277,91 @@ jobs:
             echo "---" >> $REPORT
             echo "*This report was generated automatically by the Security Scan Pipeline*" >> $REPORT
 
+      - name: Wait for S3 Lock and Update Combined Report
+        env:
+            AWS_REGION: ap-south-1
+            REPO_NAME: ${{ github.repository }}
+            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+            ENVIRONMENT: ${{ env.ENVIRONMENT }}
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            LOCK_FILE="lock-${BRANCH_PREFIX//\//-}.txt"
+            COMBINED_REPORT="combined-report.md"
+            MAX_WAIT_TIME=300  # 5 minutes max wait
+            WAIT_INTERVAL=10   # Check every 10 seconds
+            
+            echo "🔒 Attempting to acquire lock for combined report update..."
+            
+            # Try to acquire lock
+            for ((i=0; i<MAX_WAIT_TIME; i+=WAIT_INTERVAL)); do
+                # Check if lock exists
+                if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
+                    echo "⏳ Lock exists, waiting ${WAIT_INTERVAL} seconds... (${i}/${MAX_WAIT_TIME}s)"
+                    sleep $WAIT_INTERVAL
+                else
+                    # Try to create lock
+                    echo "🔓 Attempting to acquire lock..."
+                    echo "$(date): Locked by ${ENVIRONMENT} pipeline" | aws s3 cp - "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" --content-type "text/plain"
+                    
+                    # Verify lock was created (handle race condition)
+                    sleep 2
+                    if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
+                        echo "✅ Lock acquired successfully!"
+                        break
+                    else
+                        echo "❌ Lock acquisition failed, retrying..."
+                        continue
+                    fi
+                fi
+            done
+            
+            # Check if we got the lock
+            if ! aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}" >/dev/null 2>&1; then
+                echo "❌ Failed to acquire lock after ${MAX_WAIT_TIME} seconds"
+                exit 1
+            fi
+            
+            # Download existing combined report or create new one
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
+                echo "📥 Downloading existing combined report..."
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./existing-report.md
+            else
+                echo "📝 Creating new combined report..."
+                echo "# 🚀 Combined Security Scan Report" > ./existing-report.md
+                echo "" >> ./existing-report.md
+                echo "## 📊 Summary Across All Environments" >> ./existing-report.md
+                echo "" >> ./existing-report.md
+                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./existing-report.md
+                echo "**Generated:** $(date)" >> ./existing-report.md
+                echo "" >> ./existing-report.md
+            fi
+            
+            # Verify environment report exists before adding to combined report
+            if [ ! -f "report-${ENVIRONMENT}.md" ]; then
+                echo "❌ Error: report-${ENVIRONMENT}.md not found!"
+                echo "Current directory contents:"
+                ls -la
+                exit 1
+            fi
+            
+            # Add current environment report to combined report
+            echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./existing-report.md
+            echo "" >> ./existing-report.md
+            cat "report-${ENVIRONMENT}.md" >> ./existing-report.md
+            echo "" >> ./existing-report.md
+            echo "---" >> ./existing-report.md
+            echo "" >> ./existing-report.md
+            
+            # Upload updated combined report
+            echo "📤 Uploading updated combined report..."
+            aws s3 cp ./existing-report.md "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}"
+            
+            # Release lock
+            echo "🔓 Releasing lock..."
+            aws s3 rm "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_FILE}"
+            echo "✅ Lock released successfully!"
 
    
      
