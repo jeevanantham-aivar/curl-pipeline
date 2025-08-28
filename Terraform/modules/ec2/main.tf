@@ -102,7 +102,10 @@ resource "aws_instance" "main" {
   
   # Root block device configuration
   root_block_device {
-    # Volume size in GB - must be provided via variables
+    # Volume size in GB - must be provided via variab
+
+
+    
     volume_size = var.volume_size
     
     # Volume type - configurable via variables
