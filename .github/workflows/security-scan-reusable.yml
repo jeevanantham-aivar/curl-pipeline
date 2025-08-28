@@ -66,8 +66,19 @@ jobs:
             if [ -f Terraform/checkov-report.json ] && jq -e '.results.failed_checks | length > 0' Terraform/checkov-report.json > /dev/null; then
             jq -c '.results.failed_checks[]' Terraform/checkov-report.json | while read -r issue; do
                 PATH_TO_FILE=$(echo "$issue" | jq -r '.file_path')
-                LINE=$(echo "$issue" | jq -r '.file_line_range[0]')
+                ORIGINAL_LINE=$(echo "$issue" | jq -r '.file_line_range[0]')
                 BODY=$(echo "$issue" | jq -r '.check_id + ": " + .check_name')
+
+                # Apply environment-specific line number adjustments
+                if [[ "$ENVIRONMENT" == "development" ]]; then
+                    LINE=$((ORIGINAL_LINE - 1))
+                elif [[ "$ENVIRONMENT" == "production" ]]; then
+                    LINE=$ORIGINAL_LINE
+                elif [[ "$ENVIRONMENT" == "staging" ]]; then
+                    LINE=$((ORIGINAL_LINE + 1))
+                else
+                    LINE=$ORIGINAL_LINE
+                fi
 
                 if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
                 # Construct the full path relative to the repository root.
@@ -75,7 +86,7 @@ jobs:
                 # we must prepend 'Terraform/' to get the correct repository-relative path.
                 DISPLAY_PATH="Terraform/${PATH_TO_FILE}"
 
-                echo "Posting comment for: $BODY at $DISPLAY_PATH:$LINE"
+                echo "Posting comment for: $BODY at $DISPLAY_PATH:$LINE (Original: $ORIGINAL_LINE, Environment: $ENVIRONMENT)"
                 curl -L -X POST \
                     -H "Accept: application/vnd.github+json" \
                     -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -121,17 +132,28 @@ jobs:
             if [ -f bandit-report.json ] && jq -e '.results | length > 0' bandit-report.json > /dev/null; then
             jq -c '.results[]' bandit-report.json | while read -r issue; do
                 PATH_TO_FILE=$(echo "$issue" | jq -r '.filename')
-                LINE=$(echo "$issue" | jq -r '.line_number')
+                ORIGINAL_LINE=$(echo "$issue" | jq -r '.line_number')
                 ISSUE_TEXT=$(echo "$issue" | jq -r '.issue_text')
                 SEVERITY=$(echo "$issue" | jq -r '.issue_severity')
                 CONFIDENCE=$(echo "$issue" | jq -r '.issue_confidence')
 
                 BODY="Bandit: $ISSUE_TEXT (Severity: $SEVERITY, Confidence: $CONFIDENCE)"
 
+                # Apply environment-specific line number adjustments
+                if [[ "$ENVIRONMENT" == "development" ]]; then
+                    LINE=$((ORIGINAL_LINE - 1))
+                elif [[ "$ENVIRONMENT" == "production" ]]; then
+                    LINE=$ORIGINAL_LINE
+                elif [[ "$ENVIRONMENT" == "staging" ]]; then
+                    LINE=$((ORIGINAL_LINE + 1))
+                else
+                    LINE=$ORIGINAL_LINE
+                fi
+
                 if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
                 DISPLAY_PATH="${PATH_TO_FILE#./}"  # remove leading ./ if present
 
-                echo "Posting Bandit comment for: $BODY at $DISPLAY_PATH:$LINE"
+                echo "Posting Bandit comment for: $BODY at $DISPLAY_PATH:$LINE (Original: $ORIGINAL_LINE, Environment: $ENVIRONMENT)"
                 curl -L -X POST \
                     -H "Accept: application/vnd.github+json" \
                     -H "Authorization: Bearer $GITHUB_TOKEN" \
