@@ -185,7 +185,7 @@ jobs:
     
       - name: Format Reports
         run: |
-            REPORT="report-${ENVIRONMENT}.md"
+            REPORT="${ENVIRONMENT}.md"
             echo "# :shield: Security Scan Report for [${ENVIRONMENT}]" > $REPORT
             echo "" >> $REPORT
 
@@ -339,8 +339,8 @@ jobs:
             fi
             
             # Verify environment report exists before adding to combined report
-            if [ ! -f "report-${ENVIRONMENT}.md" ]; then
-                echo "❌ Error: report-${ENVIRONMENT}.md not found!"
+            if [ ! -f "${ENVIRONMENT}.md" ]; then
+                echo "❌ Error: ${ENVIRONMENT}.md not found!"
                 echo "Current directory contents:"
                 ls -la
                 exit 1
@@ -349,7 +349,7 @@ jobs:
             # Add current environment report to combined report
             echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./existing-report.md
             echo "" >> ./existing-report.md
-            cat "report-${ENVIRONMENT}.md" >> ./existing-report.md
+            cat "${ENVIRONMENT}.md" >> ./existing-report.md
             echo "" >> ./existing-report.md
             echo "---" >> ./existing-report.md
             echo "" >> ./existing-report.md
@@ -376,7 +376,7 @@ jobs:
             S3_BUCKET="github-pullrequest-reports"
             PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
             BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
-            REPORT="report-${ENVIRONMENT}.md"
+            REPORT="${ENVIRONMENT}.md"
 
             echo "📤 Uploading environment-specific reports to s3://${S3_BUCKET}/${PREFIX}/"
             aws s3 cp bandit-report.json s3://${S3_BUCKET}/${PREFIX}/bandit-report.json || true
@@ -449,7 +449,7 @@ jobs:
       - name: Post Environment Report to PR
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-            path: report-${{ env.ENVIRONMENT }}.md
+            path: ${{ env.ENVIRONMENT }}.md
             header: "🔒 Security Scan Report - ${{ env.ENVIRONMENT }} Environment"
 
       - name: Post Combined Report to PR
