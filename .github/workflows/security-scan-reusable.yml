@@ -295,19 +295,42 @@ jobs:
             aws s3 cp Terraform/checkov-report.json s3://${S3_BUCKET}/${PREFIX}/checkov-report.json || true
             aws s3 cp $REPORT s3://${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md || true
 
+      - name: Upload Combined Report to S3 (Branch Level)
+        env:
+            AWS_REGION: ap-south-1
+            REPO_NAME: ${{ github.repository }}
+            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            
+            echo "Uploading combined report to s3://${S3_BUCKET}/${BRANCH_PREFIX}/"
+            aws s3 cp combined-report.md s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md || true
+            
+            echo "Combined report uploaded to: s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md"
+
       - name: Display S3 Report Location
         run: |
             S3_BUCKET="github-pullrequest-reports"
             PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
             
             echo "## 📁 S3 Report Location" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment-Specific Reports:**" >> $GITHUB_STEP_SUMMARY
             echo "**S3 Path:** \`s3://${S3_BUCKET}/${PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
             echo "- **Bandit:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/bandit-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/bandit-report.json)" >> $GITHUB_STEP_SUMMARY
             echo "- **Checkov:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/checkov-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/checkov-report.json)" >> $GITHUB_STEP_SUMMARY
             echo "- **Markdown Summary:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/${ENVIRONMENT}.md)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Combined Report (Branch Level):**" >> $GITHUB_STEP_SUMMARY
+            echo "**S3 Path:** \`s3://${S3_BUCKET}/${BRANCH_PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Combined Report:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${BRANCH_PREFIX}/combined-report.md)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "*Job summary generated at run-time*" >> $GITHUB_STEP_SUMMARY
 
@@ -350,6 +373,46 @@ jobs:
             fi
             
             echo "*Combined report generated automatically by the Security Scan Pipeline*" >> combined-report.md
+
+      - name: Upload Combined Report to S3 (Branch Level)
+        env:
+            AWS_REGION: ap-south-1
+            REPO_NAME: ${{ github.repository }}
+            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            
+            echo "Uploading combined report to s3://${S3_BUCKET}/${BRANCH_PREFIX}/"
+            aws s3 cp combined-report.md s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md || true
+            
+            echo "Combined report uploaded to: s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md"
+
+      - name: Display S3 Report Location
+        run: |
+            S3_BUCKET="github-pullrequest-reports"
+            PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
+            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
+            
+            echo "## 📁 S3 Report Location" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment-Specific Reports:**" >> $GITHUB_STEP_SUMMARY
+            echo "**S3 Path:** \`s3://${S3_BUCKET}/${PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Bandit:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/bandit-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/bandit-report.json)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Checkov:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/checkov-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/checkov-report.json)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Markdown Summary:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/${ENVIRONMENT}.md)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Combined Report (Branch Level):**" >> $GITHUB_STEP_SUMMARY
+            echo "**S3 Path:** \`s3://${S3_BUCKET}/${BRANCH_PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Combined Report:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${BRANCH_PREFIX}/combined-report.md)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "*Job summary generated at run-time*" >> $GITHUB_STEP_SUMMARY
+
 
       - name: Post Security Scan Summary to PR
         uses: marocchino/sticky-pull-request-comment@v2
