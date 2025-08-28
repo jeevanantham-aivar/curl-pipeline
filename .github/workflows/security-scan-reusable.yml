@@ -288,6 +288,7 @@ jobs:
             S3_BUCKET="github-pullrequest-reports"
             BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
             LOCK_FILE="lock-${BRANCH_PREFIX//\//-}.txt"
+            LOCK_COUNTER_FILE="lock-counter-${BRANCH_PREFIX//\//-}.txt"
             COMBINED_REPORT="combined-report.md"
             MAX_WAIT_TIME=300  # 5 minutes max wait
             WAIT_INTERVAL=10   # Check every 10 seconds
@@ -323,6 +324,25 @@ jobs:
                 exit 1
             fi
             
+            # Increment lock counter (LOCK ACQUIRED = +1)
+            echo "🔢 Incrementing lock counter (LOCK ACQUIRED)..."
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
+                # Download existing counter
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
+                CURRENT_COUNT=$(cat ./lock-counter.txt)
+                NEW_COUNT=$((CURRENT_COUNT + 1))
+                echo "📊 Lock counter: ${CURRENT_COUNT} → ${NEW_COUNT}"
+            else
+                # Create new counter
+                NEW_COUNT=1
+                echo "📊 Lock counter: 0 → ${NEW_COUNT}"
+            fi
+            
+            # Upload updated counter
+            echo "${NEW_COUNT}" > ./lock-counter.txt
+            aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
+            echo "✅ Lock counter updated to: ${NEW_COUNT}"
+            
             # Download existing combined report or create new one
             if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
                 echo "📥 Downloading existing combined report..."
@@ -357,6 +377,18 @@ jobs:
             # Upload updated combined report
             echo "📤 Uploading updated combined report..."
             aws s3 cp ./existing-report.md "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}"
+            
+            # Increment lock counter (LOCK RELEASED = +1)
+            echo "🔢 Incrementing lock counter (LOCK RELEASED)..."
+            aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
+            CURRENT_COUNT=$(cat ./lock-counter.txt)
+            NEW_COUNT=$((CURRENT_COUNT + 1))
+            echo "📊 Lock counter: ${CURRENT_COUNT} → ${NEW_COUNT}"
+            
+            # Upload updated counter
+            echo "${NEW_COUNT}" > ./lock-counter.txt
+            aws s3 cp ./lock-counter.txt "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}"
+            echo "✅ Lock counter updated to: ${NEW_COUNT}"
             
             # Release lock
             echo "🔓 Releasing lock..."
@@ -396,6 +428,15 @@ jobs:
             echo "**Environment:** \`${ENVIRONMENT}\`" >> $GITHUB_STEP_SUMMARY
             echo "**Environment Reports:** \`s3://${S3_BUCKET}/${PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
             echo "**Combined Report:** \`s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md\`" >> $GITHUB_STEP_SUMMARY
+            
+            # Display lock counter information
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/lock-counter-${BRANCH_PREFIX//\//-}.txt" >/dev/null 2>&1; then
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/lock-counter-${BRANCH_PREFIX//\//-}.txt" ./lock-counter-display.txt
+                LOCK_COUNT=$(cat ./lock-counter-display.txt)
+                echo "**Lock Counter:** \`${LOCK_COUNT}/6\` (${ENVIRONMENT} environment)" >> $GITHUB_STEP_SUMMARY
+            else
+                echo "**Lock Counter:** \`Not found\` (${ENVIRONMENT} environment)" >> $GITHUB_STEP_SUMMARY
+            fi
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
             echo "- **Bandit:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/bandit-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/bandit-report.json)" >> $GITHUB_STEP_SUMMARY
@@ -416,19 +457,73 @@ jobs:
             S3_BUCKET="github-pullrequest-reports"
             BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
             COMBINED_REPORT="combined-report.md"
+            LOCK_COUNTER_FILE="lock-counter-${BRANCH_PREFIX//\//-}.txt"
             
-            echo "📥 Downloading combined report for PR comment..."
+            echo "📥 Checking lock counter before downloading combined report..."
             
-            # Wait a bit to ensure all environments have written their reports
-            sleep 30
+            # Wait for lock counter to reach 6 (all environments completed)
+            MAX_WAIT_TIME=600  # 10 minutes max wait
+            WAIT_INTERVAL=30   # Check every 30 seconds
+            TARGET_COUNT=6     # Target lock count
             
-            # Try to download the combined report
-            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
-                echo "✅ Combined report found, downloading..."
-                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./combined-report.md
-                echo "📄 Combined report downloaded successfully"
+            for ((i=0; i<MAX_WAIT_TIME; i+=WAIT_INTERVAL)); do
+                if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
+                    # Download current counter
+                    aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
+                    CURRENT_COUNT=$(cat ./lock-counter.txt)
+                    echo "📊 Current lock counter: ${CURRENT_COUNT}/${TARGET_COUNT} (${i}/${MAX_WAIT_TIME}s)"
+                    
+                    if [ "$CURRENT_COUNT" -ge "$TARGET_COUNT" ]; then
+                        echo "🎯 Lock counter reached target! All environments completed."
+                        break
+                    else
+                        echo "⏳ Waiting for lock counter to reach ${TARGET_COUNT}..."
+                        sleep $WAIT_INTERVAL
+                    fi
+                else
+                    echo "⏳ Lock counter file not found yet, waiting ${WAIT_INTERVAL} seconds... (${i}/${MAX_WAIT_TIME}s)"
+                    sleep $WAIT_INTERVAL
+                fi
+            done
+            
+            # Check if we reached the target count
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
+                FINAL_COUNT=$(cat ./lock-counter.txt)
+                
+                if [ "$FINAL_COUNT" -ge "$TARGET_COUNT" ]; then
+                    echo "🎉 Lock counter: ${FINAL_COUNT}/${TARGET_COUNT} - All environments completed!"
+                    
+                    # Now download the combined report
+                    if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
+                        echo "✅ Combined report found, downloading..."
+                        aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./combined-report.md
+                        echo "📄 Combined report downloaded successfully"
+                    else
+                        echo "❌ Combined report not found despite lock counter completion"
+                        exit 1
+                    fi
+                else
+                    echo "⚠️ Lock counter not reached target: ${FINAL_COUNT}/${TARGET_COUNT}"
+                    echo "Creating fallback report..."
+                    # Create a fallback combined report with current environment
+                    echo "# 🚀 Combined Security Scan Report" > ./combined-report.md
+                    echo "" >> ./combined-report.md
+                    echo "## 📊 Summary Across All Environments" >> ./combined-report.md
+                    echo "" >> ./combined-report.md
+                    echo "**Branch:** \`${BRANCH_NAME}\`" >> ./combined-report.md
+                    echo "**Generated:** $(date)" >> ./combined-report.md
+                    echo "" >> ./combined-report.md
+                    echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./combined-report.md
+                    echo "" >> ./combined-report.md
+                    cat "${ENVIRONMENT}.md" >> ./combined-report.md
+                    echo "" >> ./combined-report.md
+                    echo "---" >> ./combined-report.md
+                    echo "" >> ./combined-report.md
+                    echo "*Note: Only ${ENVIRONMENT} environment report available. Lock counter: ${FINAL_COUNT}/${TARGET_COUNT}*" >> ./combined-report.md
+                fi
             else
-                echo "⚠️ Combined report not found, creating fallback..."
+                echo "⚠️ Lock counter file not found, creating fallback report..."
                 # Create a fallback combined report with current environment
                 echo "# 🚀 Combined Security Scan Report" > ./combined-report.md
                 echo "" >> ./combined-report.md
@@ -439,11 +534,11 @@ jobs:
                 echo "" >> ./combined-report.md
                 echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./combined-report.md
                 echo "" >> ./combined-report.md
-                cat "report-${ENVIRONMENT}.md" >> ./combined-report.md
+                cat "${ENVIRONMENT}.md" >> ./combined-report.md
                 echo "" >> ./combined-report.md
                 echo "---" >> ./combined-report.md
                 echo "" >> ./combined-report.md
-                echo "*Note: Only ${ENVIRONMENT} environment report available*" >> ./combined-report.md
+                echo "*Note: Only ${ENVIRONMENT} environment report available. Lock counter file not found.*" >> ./combined-report.md
             fi
 
       - name: Post Environment Report to PR
@@ -470,32 +565,65 @@ jobs:
             BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
             COMBINED_REPORT="combined-report.md"
             FINAL_REPORT="final-combined-report.md"
+            LOCK_COUNTER_FILE="lock-counter-${BRANCH_PREFIX//\//-}.txt"
             
             echo "🎯 Creating final combined report..."
             
-            # Wait longer to ensure all environments have completed
-            sleep 60
-            
-            # Try to download the combined report from S3
-            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
-                echo "✅ Final combined report found, downloading..."
-                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./${FINAL_REPORT}
+            # Check lock counter to ensure all environments completed
+            if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" >/dev/null 2>&1; then
+                aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${LOCK_COUNTER_FILE}" ./lock-counter.txt
+                FINAL_COUNT=$(cat ./lock-counter.txt)
+                echo "📊 Final lock counter: ${FINAL_COUNT}/6"
                 
-                # Add a completion message
-                echo "" >> ./${FINAL_REPORT}
-                echo "---" >> ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                echo "## 🎉 All Environment Scans Completed!" >> ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                echo "**Total Environments Scanned:** 3 (Development, Staging, Production)" >> ./${FINAL_REPORT}
-                echo "**Report Generated:** $(date)" >> ./${FINAL_REPORT}
-                echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
-                echo "" >> ./${FINAL_REPORT}
-                echo "*This report contains security scan results from all environments*" >> ./${FINAL_REPORT}
-                
-                echo "📄 Final combined report created successfully"
+                if [ "$FINAL_COUNT" -ge 6 ]; then
+                    echo "🎉 All environments completed! Creating final report..."
+                    
+                    # Download the combined report from S3
+                    if aws s3 ls "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" >/dev/null 2>&1; then
+                        echo "✅ Final combined report found, downloading..."
+                        aws s3 cp "s3://${S3_BUCKET}/${BRANCH_PREFIX}/${COMBINED_REPORT}" ./${FINAL_REPORT}
+                        
+                        # Add a completion message
+                        echo "" >> ./${FINAL_REPORT}
+                        echo "---" >> ./${FINAL_REPORT}
+                        echo "" >> ./${FINAL_REPORT}
+                        echo "## 🎉 All Environment Scans Completed!" >> ./${FINAL_REPORT}
+                        echo "" >> ./${FINAL_REPORT}
+                        echo "**Total Environments Scanned:** 3 (Development, Staging, Production)" >> ./${FINAL_REPORT}
+                        echo "**Report Generated:** $(date)" >> ./${FINAL_REPORT}
+                        echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
+                        echo "**Lock Counter:** ${FINAL_COUNT}/6 ✅" >> ./${FINAL_REPORT}
+                        echo "" >> ./${FINAL_REPORT}
+                        echo "*This report contains security scan results from all environments*" >> ./${FINAL_REPORT}
+                        
+                        echo "📄 Final combined report created successfully"
+                    else
+                        echo "❌ Combined report not found despite lock counter completion"
+                        exit 1
+                    fi
+                else
+                    echo "⚠️ Lock counter not reached target: ${FINAL_COUNT}/6"
+                    echo "Creating fallback report..."
+                    # Create a comprehensive fallback report
+                    echo "# 🚀 Final Combined Security Scan Report" > ./${FINAL_REPORT}
+                    echo "" >> ./${FINAL_REPORT}
+                    echo "## 📊 Summary Across All Environments" >> ./${FINAL_REPORT}
+                    echo "" >> ./${FINAL_REPORT}
+                    echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
+                    echo "**Generated:** $(date)" >> ./${FINAL_REPORT}
+                    echo "**Current Environment:** ${ENVIRONMENT}" >> ./${FINAL_REPORT}
+                    echo "**Lock Counter:** ${FINAL_COUNT}/6 ⚠️" >> ./${FINAL_REPORT}
+                    echo "" >> ./${FINAL_REPORT}
+                    echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./${FINAL_REPORT}
+                    echo "" >> ./${FINAL_REPORT}
+                    cat "${ENVIRONMENT}.md" >> ./${FINAL_REPORT}
+                    echo "" >> ./${FINAL_REPORT}
+                    echo "---" >> ./${FINAL_REPORT}
+                    echo "" >> ./${FINAL_REPORT}
+                    echo "*Note: Only ${ENVIRONMENT} environment report available. Lock counter: ${FINAL_COUNT}/6*" >> ./${FINAL_REPORT}
+                fi
             else
-                echo "⚠️ Combined report not found, creating comprehensive fallback..."
+                echo "⚠️ Lock counter file not found, creating fallback report..."
                 # Create a comprehensive fallback report
                 echo "# 🚀 Final Combined Security Scan Report" > ./${FINAL_REPORT}
                 echo "" >> ./${FINAL_REPORT}
@@ -504,14 +632,15 @@ jobs:
                 echo "**Branch:** \`${BRANCH_NAME}\`" >> ./${FINAL_REPORT}
                 echo "**Generated:** $(date)" >> ./${FINAL_REPORT}
                 echo "**Current Environment:** ${ENVIRONMENT}" >> ./${FINAL_REPORT}
+                echo "**Lock Counter:** Not found ⚠️" >> ./${FINAL_REPORT}
                 echo "" >> ./${FINAL_REPORT}
                 echo "## 🔒 ${ENVIRONMENT^} Environment Report" >> ./${FINAL_REPORT}
                 echo "" >> ./${FINAL_REPORT}
-                cat "report-${ENVIRONMENT}.md" >> ./${FINAL_REPORT}
+                cat "${ENVIRONMENT}.md" >> ./${FINAL_REPORT}
                 echo "" >> ./${FINAL_REPORT}
                 echo "---" >> ./${FINAL_REPORT}
                 echo "" >> ./${FINAL_REPORT}
-                echo "*Note: Only ${ENVIRONMENT} environment report available. Other environments may still be running.*" >> ./${FINAL_REPORT}
+                echo "*Note: Only ${ENVIRONMENT} environment report available. Lock counter file not found.*" >> ./${FINAL_REPORT}
             fi
 
       - name: Post Final Combined Report to PR
