@@ -311,8 +311,47 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "*Job summary generated at run-time*" >> $GITHUB_STEP_SUMMARY
 
+      - name: Combine All Environment Reports
+        run: |
+            # Create a combined report header
+            echo "# 🚀 Combined Security Scan Report" > combined-report.md
+            echo "" >> combined-report.md
+            echo "## 📊 Summary Across All Environments" >> combined-report.md
+            echo "" >> combined-report.md
+            
+            # Add development report if it exists
+            if [ -f "report-development.md" ]; then
+                echo "### 🔧 Development Environment" >> combined-report.md
+                echo "" >> combined-report.md
+                cat report-development.md >> combined-report.md
+                echo "" >> combined-report.md
+                echo "---" >> combined-report.md
+                echo "" >> combined-report.md
+            fi
+            
+            # Add staging report if it exists
+            if [ -f "report-staging.md" ]; then
+                echo "### 🧪 Staging Environment" >> combined-report.md
+                echo "" >> combined-report.md
+                cat report-staging.md >> combined-report.md
+                echo "" >> combined-report.md
+                echo "---" >> combined-report.md
+                echo "" >> combined-report.md
+            fi
+            
+            # Add production report if it exists
+            if [ -f "report-production.md" ]; then
+                echo "### 🚀 Production Environment" >> combined-report.md
+                echo "" >> combined-report.md
+                cat report-production.md >> combined-report.md
+                echo "" >> combined-report.md
+                echo "---" >> combined-report.md
+                echo "" >> combined-report.md
+            fi
+            
+            echo "*Combined report generated automatically by the Security Scan Pipeline*" >> combined-report.md
 
       - name: Post Security Scan Summary to PR
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-            path: report-${{ env.ENVIRONMENT }}.md
+            path: combined-report.md
