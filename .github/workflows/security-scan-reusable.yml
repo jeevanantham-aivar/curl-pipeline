@@ -66,27 +66,27 @@ jobs:
             if [ -f Terraform/checkov-report.json ] && jq -e '.results.failed_checks | length > 0' Terraform/checkov-report.json > /dev/null; then
             jq -c '.results.failed_checks[]' Terraform/checkov-report.json | while read -r issue; do
                 PATH_TO_FILE=$(echo "$issue" | jq -r '.file_path')
-                ORIGINAL_LINE=$(echo "$issue" | jq -r '.file_line_range[0]')
+                LINE=$(echo "$issue" | jq -r '.file_line_range[0]')
                 BODY=$(echo "$issue" | jq -r '.check_id + ": " + .check_name')
 
-                # Apply environment-specific line number adjustments
+                if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
+                # Adjust line number based on environment
                 if [[ "$ENVIRONMENT" == "development" ]]; then
-                    LINE=$((ORIGINAL_LINE - 1))
+                    ADJUSTED_LINE=$((LINE - 1))
                 elif [[ "$ENVIRONMENT" == "production" ]]; then
-                    LINE=$ORIGINAL_LINE
+                    ADJUSTED_LINE=$LINE
                 elif [[ "$ENVIRONMENT" == "staging" ]]; then
-                    LINE=$((ORIGINAL_LINE + 1))
+                    ADJUSTED_LINE=$((LINE + 1))
                 else
-                    LINE=$ORIGINAL_LINE
+                    ADJUSTED_LINE=$LINE
                 fi
 
-                if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
                 # Construct the full path relative to the repository root.
                 # Since Checkov runs in 'Terraform/' and its file_path is relative to that,
                 # we must prepend 'Terraform/' to get the correct repository-relative path.
                 DISPLAY_PATH="Terraform/${PATH_TO_FILE}"
 
-                echo "Posting comment for: $BODY at $DISPLAY_PATH:$LINE (Original: $ORIGINAL_LINE, Environment: $ENVIRONMENT)"
+                echo "Posting comment for: $BODY at $DISPLAY_PATH:$ADJUSTED_LINE (original: $LINE, environment: $ENVIRONMENT)"
                 curl -L -X POST \
                     -H "Accept: application/vnd.github+json" \
                     -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -96,7 +96,7 @@ jobs:
                     \"body\": \"$BODY\",
                     \"commit_id\": \"$COMMIT_ID\",
                     \"path\": \"$DISPLAY_PATH\",
-                    \"line\": $LINE
+                    \"line\": $ADJUSTED_LINE
                     }"
 
                     echo "------ DEBUGGING PR COMMENT PAYLOAD ------"
@@ -132,28 +132,28 @@ jobs:
             if [ -f bandit-report.json ] && jq -e '.results | length > 0' bandit-report.json > /dev/null; then
             jq -c '.results[]' bandit-report.json | while read -r issue; do
                 PATH_TO_FILE=$(echo "$issue" | jq -r '.filename')
-                ORIGINAL_LINE=$(echo "$issue" | jq -r '.line_number')
+                LINE=$(echo "$issue" | jq -r '.line_number')
                 ISSUE_TEXT=$(echo "$issue" | jq -r '.issue_text')
                 SEVERITY=$(echo "$issue" | jq -r '.issue_severity')
                 CONFIDENCE=$(echo "$issue" | jq -r '.issue_confidence')
 
                 BODY="Bandit: $ISSUE_TEXT (Severity: $SEVERITY, Confidence: $CONFIDENCE)"
 
-                # Apply environment-specific line number adjustments
+                if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
+                # Adjust line number based on environment
                 if [[ "$ENVIRONMENT" == "development" ]]; then
-                    LINE=$((ORIGINAL_LINE - 1))
+                    ADJUSTED_LINE=$((LINE - 1))
                 elif [[ "$ENVIRONMENT" == "production" ]]; then
-                    LINE=$ORIGINAL_LINE
+                    ADJUSTED_LINE=$LINE
                 elif [[ "$ENVIRONMENT" == "staging" ]]; then
-                    LINE=$((ORIGINAL_LINE + 1))
+                    ADJUSTED_LINE=$((LINE + 1))
                 else
-                    LINE=$ORIGINAL_LINE
+                    ADJUSTED_LINE=$LINE
                 fi
 
-                if [[ -n "$PATH_TO_FILE" && -n "$LINE" && -n "$BODY" ]]; then
                 DISPLAY_PATH="${PATH_TO_FILE#./}"  # remove leading ./ if present
 
-                echo "Posting Bandit comment for: $BODY at $DISPLAY_PATH:$LINE (Original: $ORIGINAL_LINE, Environment: $ENVIRONMENT)"
+                echo "Posting Bandit comment for: $BODY at $DISPLAY_PATH:$ADJUSTED_LINE (original: $LINE, environment: $ENVIRONMENT)"
                 curl -L -X POST \
                     -H "Accept: application/vnd.github+json" \
                     -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -163,7 +163,7 @@ jobs:
                     \"body\": \"$BODY\",
                     \"commit_id\": \"$COMMIT_ID\",
                     \"path\": \"$DISPLAY_PATH\",
-                    \"line\": $LINE
+                    \"line\": $ADJUSTED_LINE
                     }"
 
                 echo "------ DEBUGGING BANDIT COMMENT PAYLOAD ------"
@@ -295,30 +295,14 @@ jobs:
             aws s3 cp Terraform/checkov-report.json s3://${S3_BUCKET}/${PREFIX}/checkov-report.json || true
             aws s3 cp $REPORT s3://${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md || true
 
-      - name: Upload Combined Report to S3 (Branch Level)
-        env:
-            AWS_REGION: ap-south-1
-            REPO_NAME: ${{ github.repository }}
-            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
-        run: |
-            S3_BUCKET="github-pullrequest-reports"
-            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
-            
-            echo "Uploading combined report to s3://${S3_BUCKET}/${BRANCH_PREFIX}/"
-            aws s3 cp combined-report.md s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md || true
-            
-            echo "Combined report uploaded to: s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md"
-
       - name: Display S3 Report Location
         run: |
             S3_BUCKET="github-pullrequest-reports"
             PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
-            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
             
-            echo "## 📁 S3 Report Location" >> $GITHUB_STEP_SUMMARY
+            echo "## 📁 S3 Report Location for ${ENVIRONMENT}" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Environment-Specific Reports:**" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment:** \`${ENVIRONMENT}\`" >> $GITHUB_STEP_SUMMARY
             echo "**S3 Path:** \`s3://${S3_BUCKET}/${PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
@@ -326,95 +310,9 @@ jobs:
             echo "- **Checkov:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/checkov-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/checkov-report.json)" >> $GITHUB_STEP_SUMMARY
             echo "- **Markdown Summary:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/${ENVIRONMENT}.md)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Combined Report (Branch Level):**" >> $GITHUB_STEP_SUMMARY
-            echo "**S3 Path:** \`s3://${S3_BUCKET}/${BRANCH_PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
-            echo "- **Combined Report:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${BRANCH_PREFIX}/combined-report.md)" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "*Job summary generated at run-time*" >> $GITHUB_STEP_SUMMARY
-
-      - name: Combine All Environment Reports
-        run: |
-            # Create a combined report header
-            echo "# 🚀 Combined Security Scan Report" > combined-report.md
-            echo "" >> combined-report.md
-            echo "## 📊 Summary Across All Environments" >> combined-report.md
-            echo "" >> combined-report.md
-            
-            # Add development report if it exists
-            if [ -f "report-development.md" ]; then
-                echo "### 🔧 Development Environment" >> combined-report.md
-                echo "" >> combined-report.md
-                cat report-development.md >> combined-report.md
-                echo "" >> combined-report.md
-                echo "---" >> combined-report.md
-                echo "" >> combined-report.md
-            fi
-            
-            # Add staging report if it exists
-            if [ -f "report-staging.md" ]; then
-                echo "### 🧪 Staging Environment" >> combined-report.md
-                echo "" >> combined-report.md
-                cat report-staging.md >> combined-report.md
-                echo "" >> combined-report.md
-                echo "---" >> combined-report.md
-                echo "" >> combined-report.md
-            fi
-            
-            # Add production report if it exists
-            if [ -f "report-production.md" ]; then
-                echo "### 🚀 Production Environment" >> combined-report.md
-                echo "" >> combined-report.md
-                cat report-production.md >> combined-report.md
-                echo "" >> combined-report.md
-                echo "---" >> combined-report.md
-                echo "" >> combined-report.md
-            fi
-            
-            echo "*Combined report generated automatically by the Security Scan Pipeline*" >> combined-report.md
-
-      - name: Upload Combined Report to S3 (Branch Level)
-        env:
-            AWS_REGION: ap-south-1
-            REPO_NAME: ${{ github.repository }}
-            BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-            COMMIT_ID: ${{ github.event.pull_request.head.sha }}
-        run: |
-            S3_BUCKET="github-pullrequest-reports"
-            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
-            
-            echo "Uploading combined report to s3://${S3_BUCKET}/${BRANCH_PREFIX}/"
-            aws s3 cp combined-report.md s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md || true
-            
-            echo "Combined report uploaded to: s3://${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md"
-
-      - name: Display S3 Report Location
-        run: |
-            S3_BUCKET="github-pullrequest-reports"
-            PREFIX="${REPO_NAME}/${BRANCH_NAME}/${ENVIRONMENT}"
-            BRANCH_PREFIX="${REPO_NAME}/${BRANCH_NAME}"
-            
-            echo "## 📁 S3 Report Location" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Environment-Specific Reports:**" >> $GITHUB_STEP_SUMMARY
-            echo "**S3 Path:** \`s3://${S3_BUCKET}/${PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
-            echo "- **Bandit:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/bandit-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/bandit-report.json)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Checkov:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/checkov-report.json) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/checkov-report.json)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Markdown Summary:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${PREFIX}/${ENVIRONMENT}.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${PREFIX}/${ENVIRONMENT}.md)" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Combined Report (Branch Level):**" >> $GITHUB_STEP_SUMMARY
-            echo "**S3 Path:** \`s3://${S3_BUCKET}/${BRANCH_PREFIX}/\`" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Available Reports:**" >> $GITHUB_STEP_SUMMARY
-            echo "- **Combined Report:** [Open in AWS Console](https://console.aws.amazon.com/s3/object/${S3_BUCKET}/${BRANCH_PREFIX}/combined-report.md) | [Download (1h)](https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${BRANCH_PREFIX}/combined-report.md)" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "*Job summary generated at run-time*" >> $GITHUB_STEP_SUMMARY
-
+            echo "*Reports uploaded for ${ENVIRONMENT} environment*" >> $GITHUB_STEP_SUMMARY
 
       - name: Post Security Scan Summary to PR
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-            path: combined-report.md
+            path: report-${{ env.ENVIRONMENT }}.md
