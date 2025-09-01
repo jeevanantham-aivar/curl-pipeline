@@ -35,13 +35,11 @@ jobs:
         id: set_env
         run: |
           if [[ "${{ github.head_ref }}" == feature/* && "${{ github.base_ref }}" == "develop" ]]; then
-              echo "TFVARS=development/terraform.tfvars" >> $GITHUB_ENV
-          elif [[ "${{ github.head_ref }}" == feature/* && "${{ github.base_ref }}" == "main" ]]; then
-              echo "TFVARS=development/terraform.tfvars" >> $GITHUB_ENV
+              echo "TFVARS=dev.tfvars" >> $GITHUB_ENV
           elif [[ "${{ github.head_ref }}" == "develop" && "${{ github.base_ref }}" == "main" ]]; then
-              echo "TFVARS=production/terraform.tfvars" >> $GITHUB_ENV
+              echo "TFVARS=prod.tfvars" >> $GITHUB_ENV
           else
-              echo "TFVARS=development/terraform.tfvars" >> $GITHUB_ENV # Default fallback
+              echo "TFVARS=dev.tfvars" >> $GITHUB_ENV # Default fallback
           fi
 
       - name: Set up Terraform
