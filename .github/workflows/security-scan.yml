@@ -13,8 +13,8 @@ jobs:
   security-scan:
     if: |
       (startsWith(github.head_ref, 'feature/') && github.base_ref == 'develop') ||
-      (github.head_ref == 'develop' && github.base_ref == 'main') ||
-      (startsWith(github.head_ref, 'feature/') && github.base_ref == 'main')
+      (github.head_ref == 'develop' && github.base_ref == 'main')
+      
     runs-on: ubuntu-latest
 
     steps:
