@@ -158,87 +158,96 @@ jobs:
 
       - name: Format Reports
         run: |
-          echo "# :shield: Security Scan Report" > report.md
-          echo "" >> report.md
-          CHECKOV_PASSED=$(jq '.summary.passed' Terraform/checkov-report.json 2>/dev/null || echo "0")
-          CHECKOV_FAILED=$(jq '.summary.failed' Terraform/checkov-report.json 2>/dev/null || echo "0")
-          CHECKOV_SKIPPED=$(jq '.summary.skipped' Terraform/checkov-report.json 2>/dev/null || echo "0")
-          BANDIT_FAILED=$(jq '.results | length' bandit-report.json 2>/dev/null || echo "0")
-          {
-            echo "1️⃣ **Checkov Report**"
-            echo " - 🟢 **PASSED Checks:** $CHECKOV_PASSED"
-            echo " - 🔴 **FAILED Checks:** $CHECKOV_FAILED"
-            echo " - ⚠️ **SKIPPED Checks:** $CHECKOV_SKIPPED"
-            echo ""
-            echo "2️⃣ **Bandit Report**"
-            echo " - 🔴 **FAILED Checks:** $BANDIT_FAILED"
-            echo ""
-            if [ "$CHECKOV_FAILED" -eq 0 ] && [ "$BANDIT_FAILED" -eq 0 ]; then
-              echo ":white_check_mark: Everything looks secure. Great job! 🔐"
+            echo "# :shield: Security Scan Report" > report.md
+            echo "" >> report.md
+
+            CHECKOV_JSON="Terraform/checkov-report.json"
+
+            CHECKOV_PASSED=$(jq '.summary.passed' "$CHECKOV_JSON" 2>/dev/null || echo "0")
+            CHECKOV_FAILED=$(jq '.summary.failed' "$CHECKOV_JSON" 2>/dev/null || echo "0")
+            CHECKOV_SKIPPED=$(jq '.summary.skipped' "$CHECKOV_JSON" 2>/dev/null || echo "0")
+            BANDIT_FAILED=$(jq '.results | length' bandit-report.json 2>/dev/null || echo "0")
+
+            {
+                echo "1️⃣ **Checkov Report**"
+                echo "   - 🟢 **PASSED Checks:** $CHECKOV_PASSED"
+                echo "   - 🔴 **FAILED Checks:** $CHECKOV_FAILED"
+                echo "   - ⚠️  **SKIPPED Checks:** $CHECKOV_SKIPPED"
+                echo ""
+                echo "2️⃣ **Bandit Report**"
+                echo "   - 🔴 **FAILED Checks:** $BANDIT_FAILED"
+                echo ""
+                if [ "$CHECKOV_FAILED" -eq 0 ] && [ "$BANDIT_FAILED" -eq 0 ]; then
+                echo ":white_check_mark: Everything looks secure. Great job! 🔐"
+                else
+                echo "*⚡️ Every 🔴 is a risk bomb. Defuse before you MERGE!*"
+                fi
+                echo ""
+                echo "---"
+                echo ""
+            } >> report.md
+
+            export REPO_URL="https://github.com/${GITHUB_REPOSITORY}"
+            export BRANCH="${GITHUB_HEAD_REF:-$(git rev-parse --abbrev-ref HEAD)}"
+
+            echo "## :cloud: Checkov Detailed Report" >> report.md
+            echo "" >> report.md
+            if [ -f "$CHECKOV_JSON" ]; then
+                FAILED=$(jq '.results.failed_checks | length' "$CHECKOV_JSON" 2>/dev/null || echo "0")
+                if [ "$FAILED" -gt 0 ]; then
+                jq -r --arg repo_url "$REPO_URL" --arg branch "$BRANCH" '
+                    .results.failed_checks[]? |
+                    "- **" + (.check_id // "N/A") + ":** " + (.check_name // "N/A") + "\n" +
+                    (
+                        if (.file_path // "") != "" and
+                        ((.file_line_range | type) == "array" and (.file_line_range | length) > 0)
+                        then
+                        "  - **Location:** [`" + (.file_path | ltrimstr("/")) + ":" + ((.file_line_range[0]|tostring) // "?") + "`]" +
+                        "(" + $repo_url + "/blob/" + $branch + "/Terraform/" + ((.file_path | ltrimstr("/") | ltrimstr("Terraform/"))) + "#L" + ((.file_line_range[0]|tostring) // "") + ")\n"
+                        elif .resource_address then
+                        "  - **Resource:** `" + .resource_address + "`\n"
+                        else "" end
+                    ) +
+                    "  - **Severity:** " + ((.severity // "N/A")) + "\n" +
+                    "  - **Guideline:** " + ((.guideline // "N/A")) + "\n" +
+                    "  - **Description:** " + ((.description // .check_name // "No description provided.")) + "\n"
+                ' "$CHECKOV_JSON" >> report.md
+                else
+                echo ":white_check_mark: **No failed infrastructure checks found!**" >> report.md
+                fi
             else
-              echo "*⚡️ Every 🔴 is a risk bomb. Defuse before you MERGE!*"
+                echo ":warning: Checkov report not generated." >> report.md
             fi
-            echo ""
-            echo "---"
-            echo ""
-          } >> report.md
-          export REPO_URL="https://github.com/${GITHUB_REPOSITORY}"
-          export BRANCH="${GITHUB_HEAD_REF:-$(git rev-parse --abbrev-ref HEAD)}"
-          echo "## :cloud: Checkov Detailed Report" >> report.md
-          echo "" >> report.md
-          if [ -f Terraform/checkov-report.json ]; then
-            FAILED=$(jq '.results.failed_checks | length' Terraform/checkov-report.json 2>/dev/null || echo "0")
-            if [ "$FAILED" -gt 0 ]; then
-              jq -r --arg repo_url "$REPO_URL" --arg branch "$BRANCH" '
-                .results.failed_checks[]? |
-                "- **" + (.check_id // "N/A") + ":** " + (.check_name // "N/A") + "\n" +
-                (
-                  if (.file_path // "") != "" and
-                     ((.file_line_range | type) == "array" and (.file_line_range | length) > 0)
-                  then
-                    " - **Location:** [`" + (.file_path | ltrimstr("/")) + ":" + ((.file_line_range[0]|tostring) // "?") + "`]" +
-                    "(" + $repo_url + "/blob/" + $branch + "/Terraform/" + (.file_path | ltrimstr("/")) + "#L" + ((.file_line_range[0]|tostring) // "") + ")\n"
-                  elif .resource_address then
-                    " - **Resource:** `" + .resource_address + "`\n"
-                  else "" end
-                ) +
-                " - **Severity:** " + ((.severity // "N/A")) + "\n" +
-                " - **Guideline:** " + ((.guideline // "N/A")) + "\n" +
-                " - **Description:** " + ((.description // .check_name // "No description provided.")) + "\n"
-              ' Terraform/checkov-report.json >> report.md
+
+            echo "" >> report.md
+            echo "---" >> report.md
+            echo "" >> report.md
+
+            echo "## :snake: Bandit Detailed Report" >> report.md
+            echo "" >> report.md
+            if [ -f bandit-report.json ]; then
+                COUNT=$(jq '.results | length' bandit-report.json 2>/dev/null || echo "0")
+                if [ "$COUNT" -gt 0 ]; then
+                jq -r --arg repo_url "$REPO_URL" --arg branch "$BRANCH" '
+                    .results[] |
+                    "### Issue: " + (.issue_text // "N/A") + "\n" +
+                    "- **Location:** [`" + (.filename // "unknown") + ":" + ((.line_number | tostring) // "?") + "`]" +
+                    "(" + $repo_url + "/blob/" + $branch + "/" + (.filename | ltrimstr("/")) + "#L" + (.line_number|tostring) + ")\n" +
+                    "- **Severity:** " + (.issue_severity // "N/A") + "\n" +
+                    "- **Confidence:** " + (.issue_confidence // "N/A") + "\n" +
+                    "- **CWE:** [" + ((.issue_cwe.id | tostring) // "N/A") + "](" + (.issue_cwe.link // "#") + ")\n" +
+                    "---\n"
+                ' bandit-report.json >> report.md
+                else
+                echo ":white_check_mark: **No Bandit issues found!**" >> report.md
+                fi
             else
-              echo ":white_check_mark: **No failed infrastructure checks found!**" >> report.md
+                echo ":warning: Bandit report not generated." >> report.md
             fi
-          else
-            echo ":warning: Checkov report not generated." >> report.md
-          fi
-          echo "" >> report.md
-          echo "---" >> report.md
-          echo "" >> report.md
-          echo "## :snake: Bandit Detailed Report" >> report.md
-          echo "" >> report.md
-          if [ -f bandit-report.json ]; then
-            COUNT=$(jq '.results | length' bandit-report.json 2>/dev/null || echo "0")
-            if [ "$COUNT" -gt 0 ]; then
-              jq -r --arg repo_url "$REPO_URL" --arg branch "$BRANCH" '
-                .results[] |
-                "### Issue: " + (.issue_text // "N/A") + "\n" +
-                "- **Location:** [`" + (.filename // "unknown") + ":" + ((.line_number | tostring) // "?") + "`]" +
-                "(" + $repo_url + "/blob/" + $branch + "/" + (.filename | ltrimstr("/")) + "#L" + (.line_number|tostring) + ")\n" +
-                "- **Severity:** " + (.issue_severity // "N/A") + "\n" +
-                "- **Confidence:** " + (.issue_confidence // "N/A") + "\n" +
-                "- **CWE:** [" + ((.issue_cwe.id | tostring) // "N/A") + "](" + (.issue_cwe.link // "#") + ")\n" +
-                "---\n"
-              ' bandit-report.json >> report.md
-            else
-              echo ":white_check_mark: **No Bandit issues found!**" >> report.md
-            fi
-          else
-            echo ":warning: Bandit report not generated." >> report.md
-          fi
-          echo "" >> report.md
-          echo "---" >> report.md
-          echo "*This report was generated automatically by the Security Scan Pipeline*" >> report.md
+
+            echo "" >> report.md
+            echo "---" >> report.md
+            echo "*This report was generated automatically by the Security Scan Pipeline*" >> report.md
 
       - name: Upload Reports to S3
         env:
