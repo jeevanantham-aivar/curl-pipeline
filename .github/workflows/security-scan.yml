@@ -279,7 +279,7 @@ jobs:
             S3_BUCKET="github-pullrequest-reports"
             PREFIX="${REPO_NAME}/${BRANCH_NAME}"
             
-            echo "## 📁 S3 Report Location" >> $GITHUB_STEP_SUMMARY
+            echo "## 📁 S3 Report Locations" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Repository:** \`${REPO_NAME}\`" >> $GITHUB_STEP_SUMMARY
             echo "**Branch:** \`${BRANCH_NAME}\`" >> $GITHUB_STEP_SUMMARY
