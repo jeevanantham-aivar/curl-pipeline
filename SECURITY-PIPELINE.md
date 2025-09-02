@@ -89,6 +89,22 @@ cd <repository-name>
 2. **Develop Branch** (create from main)
 3. **Feature Branches** (create from develop)
 
+#### Branch Flow Strategy
+
+#### Why This Logic?
+- **Feature Branch Management**: Multiple feature branches can be developed simultaneously
+- **Quality Gates**: All features are merged into `develop` for integration testing
+- **Production Safety**: Only thoroughly tested code from `develop` reaches `main`
+- **Efficiency**: Reduces merge conflicts and ensures systematic deployment
+
+1. **Feature Branches → Develop**: Uses `dev.tfvars` (Development environment)
+   - Example: `feature/user-authentication` → `develop`
+   - Purpose: Test new features in development environment
+
+2. **Develop → Main**: Uses `prod.tfvars` (Production environment)
+   - Example: `develop` → `main`
+   - Purpose: Deploy tested features to production
+
 ```bash
 # Step 1: Ensure you're on main branch
 git checkout main
@@ -198,20 +214,7 @@ if: |
   (github.head_ref == 'develop' && github.base_ref == 'main')
 ```
 
-#### Branch Flow Strategy
-1. **Feature Branches → Develop**: Uses `dev.tfvars` (Development environment)
-   - Example: `feature/user-authentication` → `develop`
-   - Purpose: Test new features in development environment
 
-2. **Develop → Main**: Uses `prod.tfvars` (Production environment)
-   - Example: `develop` → `main`
-   - Purpose: Deploy tested features to production
-
-#### Why This Logic?
-- **Feature Branch Management**: Multiple feature branches can be developed simultaneously
-- **Quality Gates**: All features are merged into `develop` for integration testing
-- **Production Safety**: Only thoroughly tested code from `develop` reaches `main`
-- **Efficiency**: Reduces merge conflicts and ensures systematic deployment
 
 ### Pipeline Execution Flow
 
