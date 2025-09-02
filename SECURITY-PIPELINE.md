@@ -72,7 +72,7 @@ repo-root/
 
 #### 1. Repository Setup
 1. **Create Repository from Aivar Template**:
-   - Go to GitHub and create a new repository using Aivar Template
+   - Go to GitHub and create a new repository using **'Aivar Template'**
    - Name your repository and create it
 
 2. **Clone the Repository Locally**:
